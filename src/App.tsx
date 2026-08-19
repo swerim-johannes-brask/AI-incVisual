@@ -904,20 +904,7 @@ async function fetchAndColorizeMask(maskUrl: string, isInstance = false): Promis
   return outCanvas.toDataURL("image/png");
 }
 
-function getExpandedFolderSet(node: TreeNode): Set<string> {
-  const expanded = new Set<string>();
 
-  const visit = (current: TreeNode) => {
-    if (current.path && current.children.length > 0) {
-      expanded.add(current.path);
-    }
-
-    current.children.forEach(visit);
-  };
-
-  visit(node);
-  return expanded;
-}
 
 function navigationButtonStyle(
   disabled: boolean
