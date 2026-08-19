@@ -6,6 +6,18 @@ export interface ImageBlob {
   url: string;
 }
 
+export type NoteValue =
+  | string
+  | {
+      question?: string;
+      note?: string;
+      comment?: string;
+      answer?: string;
+      reply?: string;
+      answered?: boolean;
+      comments?: string[] | string;
+    };
+
 function shouldIncludeBlob(blobName: string): boolean {
   const segments = blobName
     .split("/")
@@ -79,4 +91,45 @@ export async function loadMasks(
   }
 
   return masks.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export async function loadNotes(
+  sasUrl: string
+): Promise<Record<string, NoteValue>> {
+  const client = new ContainerClient(sasUrl.trim());
+
+  try {
+    const blobClient = client.getBlobClient("metadata/notes.json");
+    const response = await fetch(blobClient.url);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      return {};
+    }
+
+    return data as Record<string, NoteValue>;
+  } catch (error) {
+    console.warn("Could not load metadata/notes.json", error);
+    return {};
+  }
+}
+
+export async function saveNotes(
+  sasUrl: string,
+  notes: Record<string, NoteValue>
+): Promise<void> {
+  const client = new ContainerClient(sasUrl.trim());
+  const blobClient = client.getBlockBlobClient("metadata/notes.json");
+  const json = JSON.stringify(notes, null, 2);
+  const encoded = new TextEncoder().encode(json);
+
+  await blobClient.uploadData(encoded, {
+    blobHTTPHeaders: {
+      blobContentType: "application/json",
+    },
+  });
 }

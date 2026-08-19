@@ -1,11 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import UTIF from "utif";
 import FolderTree from "./components/FolderTree";
-import { loadImages, loadMasks } from "./services/azureBlobService";
+import {
+  loadImages,
+  loadMasks,
+  loadNotes,
+  saveNotes,
+  type NoteValue,
+} from "./services/azureBlobService";
 import { buildTree } from "./services/treeBuilder";
 import type { TreeNode } from "./types/DatasetTree";
 
-type FilterMode = "all" | "annotated" | "unannotated";
+type FilterMode = "all" | "annotated" | "unannotated" | "notes";
 
 interface DatasetImage {
   name: string;
@@ -37,10 +43,31 @@ export default function App() {
   >(null);
   const [masks, setMasks] = useState<Record<string, string>>({});
   const [annotatedSet, setAnnotatedSet] = useState<Set<string>>(new Set());
+  const [noteSet, setNoteSet] = useState<Set<string>>(new Set());
+  const [notes, setNotes] = useState<Record<string, NoteValue>>({});
+  const [noteReplyDraft, setNoteReplyDraft] = useState("");
+  const [commentDraft, setCommentDraft] = useState("");
   const [maskOverlayUrl, setMaskOverlayUrl] = useState<string | null>(null);
   const [instanceOverlayUrl, setInstanceOverlayUrl] = useState<string | null>(null);
   const [showMaskOverlay, setShowMaskOverlay] = useState(true);
   const [showInstanceOverlay, setShowInstanceOverlay] = useState(true);
+
+  const selectedNote = useMemo(() => {
+    if (!selectedImage) {
+      return null;
+    }
+
+    return normalizeNoteValue(notes[selectedImage.path]);
+  }, [notes, selectedImage]);
+
+  const noteImages = useMemo(() => {
+    return images
+      .filter((image) => {
+        const value = normalizeNoteValue(notes[image.path]);
+        return value.question.trim().length > 0 || value.comments.length > 0;
+      })
+      .sort((a, b) => a.path.localeCompare(b.path));
+  }, [images, notes]);
 
   useEffect(() => {
     let isCancelled = false;
@@ -115,11 +142,15 @@ export default function App() {
       return baseImages;
     }
 
+    if (filterMode === "notes") {
+      return baseImages.filter((image) => noteSet.has(image.path));
+    }
+
     return baseImages.filter((image) => {
       const isAnnotated = annotatedSet.has(image.path);
       return filterMode === "annotated" ? isAnnotated : !isAnnotated;
     });
-  }, [images, selectedFolderPath, filterMode, annotatedSet]);
+  }, [images, selectedFolderPath, filterMode, annotatedSet, noteSet]);
 
   const selectedImageIndex = useMemo(() => {
     if (!selectedImage) {
@@ -151,6 +182,7 @@ export default function App() {
       setExpandedFolders(new Set());
       setMaskOverlayUrl(null);
       setInstanceOverlayUrl(null);
+      setNoteReplyDraft("");
 
       const loadedImages =
         (await loadImages(trimmedSasUrl)) as DatasetImage[];
@@ -173,6 +205,20 @@ export default function App() {
       const maskMap: Record<string, string> = {};
       for (const m of loadedMasks) {
         maskMap[m.path] = m.url;
+      }
+
+      const loadedNotes = await loadNotes(trimmedSasUrl);
+      const normalizedNotes: Record<string, NoteValue> = {};
+      const nextNoteSet = new Set<string>();
+      for (const [path, value] of Object.entries(loadedNotes)) {
+        const normalized = normalizeNoteValue(value);
+
+        if (!normalized.question.trim() && normalized.comments.length === 0) {
+          continue;
+        }
+
+        normalizedNotes[path] = normalized;
+        nextNoteSet.add(path);
       }
 
       const annotated = new Set<string>();
@@ -201,6 +247,8 @@ export default function App() {
 
       setMasks(maskMap);
       setAnnotatedSet(annotated);
+      setNotes(normalizedNotes);
+      setNoteSet(nextNoteSet);
 
       const annotatedTree = computeAnnotatedCounts(builtTree, annotated);
 
@@ -218,7 +266,9 @@ export default function App() {
             ) ?? validImages[0]
           : validImages[0];
 
+        const firstNote = normalizeNoteValue(notes[firstImageInRoot.path]);
         setSelectedImage(firstImageInRoot);
+        setNoteReplyDraft(firstNote.reply);
         setStatus(
           rootFolder
             ? `Connected successfully. Showing ${rootFolder} images.`
@@ -240,6 +290,8 @@ export default function App() {
       setExpandedFolders(new Set());
       setMasks({});
       setAnnotatedSet(new Set());
+      setNotes({});
+      setNoteSet(new Set());
 
       if (error instanceof Error) {
         setStatus(`Connection failed: ${error.message}`);
@@ -266,10 +318,12 @@ export default function App() {
     const filteredFolderImages =
       filterMode === "all"
         ? folderImages
-        : folderImages.filter((image) => {
-            const isAnnotated = annotatedSet.has(image.path);
-            return filterMode === "annotated" ? isAnnotated : !isAnnotated;
-          });
+        : filterMode === "notes"
+          ? folderImages.filter((image) => noteSet.has(image.path))
+          : folderImages.filter((image) => {
+              const isAnnotated = annotatedSet.has(image.path);
+              return filterMode === "annotated" ? isAnnotated : !isAnnotated;
+            });
 
     if (filteredFolderImages.length > 0) {
       setSelectedImage(filteredFolderImages[0]);
@@ -323,9 +377,104 @@ export default function App() {
       return;
     }
 
+    const existing = normalizeNoteValue(notes[path]);
     setSelectedFolderPath(getParentFolderPath(path));
     setImageLoadError(false);
     setSelectedImage(image);
+    setNoteReplyDraft(existing.reply);
+    setCommentDraft("");
+  };
+
+  const handleSaveReply = async () => {
+    if (!selectedImage) {
+      return;
+    }
+
+    const existing = normalizeNoteValue(notes[selectedImage.path]);
+    const trimmedReply = noteReplyDraft.trim();
+    const updatedObject: Record<string, string | boolean | string[] | undefined> = {
+      question: existing.question || selectedImage.name,
+      comments: existing.comments,
+      answered: trimmedReply.length > 0,
+    };
+
+    if (trimmedReply) {
+      updatedObject.reply = trimmedReply;
+    }
+
+    const updatedNotes: Record<string, NoteValue> = {
+      ...notes,
+      [selectedImage.path]: Object.fromEntries(
+        Object.entries(updatedObject).filter(([, value]) => value !== undefined)
+      ) as Record<string, unknown> as NoteValue,
+    };
+
+    const nextNoteSet = new Set<string>();
+    for (const [path, value] of Object.entries(updatedNotes)) {
+      const normalized = normalizeNoteValue(value);
+      if (normalized.question.trim() || normalized.comments.length > 0) {
+        nextNoteSet.add(path);
+      }
+    }
+
+    setNotes(updatedNotes);
+    setNoteSet(nextNoteSet);
+    setNoteReplyDraft(trimmedReply);
+
+    try {
+      await saveNotes(sasUrl.trim(), updatedNotes);
+      setStatus(
+        trimmedReply
+          ? `Saved reply for ${selectedImage.path}.`
+          : `Removed reply for ${selectedImage.path}.`
+      );
+    } catch (error) {
+      console.error("Failed to save note reply:", error);
+      setStatus("Failed to save reply to notes.json.");
+    }
+  };
+
+  const handleSaveComment = async () => {
+    if (!selectedImage) {
+      return;
+    }
+
+    const trimmedComment = commentDraft.trim();
+    if (!trimmedComment) {
+      return;
+    }
+
+    const existing = normalizeNoteValue(notes[selectedImage.path]);
+    const updatedComments = [...existing.comments, trimmedComment];
+    const updatedNotes: Record<string, NoteValue> = {
+      ...notes,
+      [selectedImage.path]: {
+        question: existing.question,
+        reply: existing.reply,
+        comments: updatedComments,
+        answered: existing.answered || Boolean(existing.reply),
+      },
+    };
+
+    const nextNoteSet = new Set<string>();
+    for (const [path, value] of Object.entries(updatedNotes)) {
+      const normalized = normalizeNoteValue(value);
+      if (normalized.question.trim() || normalized.comments.length > 0) {
+        nextNoteSet.add(path);
+      }
+    }
+
+    setNotes(updatedNotes);
+    setNoteSet(nextNoteSet);
+    setCommentDraft("");
+
+    try {
+      await saveNotes(sasUrl.trim(), updatedNotes);
+      setStatus(`Saved comment for ${selectedImage.path}.`);
+    } catch (error) {
+      console.error("Failed to save comment:", error);
+      setStatus("Failed to save comment to notes.json.");
+    }
   };
 
   const selectPreviousImage = () => {
@@ -333,8 +482,12 @@ export default function App() {
       return;
     }
 
+    const nextImage = visibleImages[selectedImageIndex - 1];
+    const nextReply = normalizeNoteValue(notes[nextImage.path]).reply;
     setImageLoadError(false);
-    setSelectedImage(visibleImages[selectedImageIndex - 1]);
+    setSelectedImage(nextImage);
+    setNoteReplyDraft(nextReply);
+    setCommentDraft("");
   };
 
   const selectNextImage = () => {
@@ -345,8 +498,12 @@ export default function App() {
       return;
     }
 
+    const nextImage = visibleImages[selectedImageIndex + 1];
+    const nextReply = normalizeNoteValue(notes[nextImage.path]).reply;
     setImageLoadError(false);
-    setSelectedImage(visibleImages[selectedImageIndex + 1]);
+    setSelectedImage(nextImage);
+    setNoteReplyDraft(nextReply);
+    setCommentDraft("");
   };
 
   const handleSasUrlKeyDown = (
@@ -450,7 +607,7 @@ export default function App() {
           flex: 1,
           minHeight: 0,
           display: "grid",
-          gridTemplateColumns: "minmax(280px, 250px) 1fr minmax(220px, 250px)",
+          gridTemplateColumns: "minmax(280px, 250px) 1fr minmax(260px, 320px)",
           overflow: "hidden",
         }}
       >
@@ -480,6 +637,8 @@ export default function App() {
               selectedImagePath={selectedImage?.path ?? null}
               expandedFolders={expandedFolders}
               annotatedSet={annotatedSet}
+              noteSet={noteSet}
+              notes={notes}
               filterMode={filterMode}
               onFolderSelected={handleFolderSelected}
               onToggleFolder={handleToggleFolder}
@@ -633,8 +792,8 @@ export default function App() {
               </label>
             </div>
 
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              {(["all", "annotated", "unannotated"] as const).map((mode) => (
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              {(["all", "annotated", "unannotated", "notes"] as const).map((mode) => (
                 <button
                   key={mode}
                   type="button"
@@ -649,7 +808,7 @@ export default function App() {
                     cursor: "pointer",
                   }}
                 >
-                  {mode === "all" ? "All" : mode === "annotated" ? "Annotated" : "Unannotated"}
+                  {mode === "all" ? "All" : mode === "annotated" ? "Annotated" : mode === "unannotated" ? "Unannotated" : "Notes"}
                 </button>
               ))}
             </div>
@@ -744,6 +903,256 @@ export default function App() {
                   Open image in new tab
                 </a>
               </dd>
+
+              <dt style={labelStyle}>Questions & comments</dt>
+              <dd style={{ ...valueStyle, display: "flex", flexDirection: "column", gap: 10 }}>
+                {selectedNote && (selectedNote.question || selectedNote.comments.length > 0 || selectedNote.reply) ? (
+                  <>
+                    {selectedNote.question ? (
+                      <div
+                        style={{
+                          padding: "8px 10px",
+                          borderRadius: "6px",
+                          border: "1px solid #e5e7eb",
+                          background: selectedNote.reply ? "#f0fdf4" : "#fff7ed",
+                          color: "#1f2937",
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: selectedNote.reply ? "#166534" : "#c2410c",
+                            marginBottom: 4,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {selectedNote.reply ? "Answered question" : "Question"}
+                        </div>
+                        {selectedNote.question}
+                      </div>
+                    ) : null}
+
+                    {selectedNote.reply ? (
+                      <div
+                        style={{
+                          padding: "8px 10px",
+                          borderRadius: "6px",
+                          border: "1px solid #d1fae5",
+                          background: "#ecfdf5",
+                          color: "#065f46",
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        <strong style={{ display: "block", marginBottom: 4 }}>Reply:</strong>
+                        {selectedNote.reply}
+                      </div>
+                    ) : null}
+
+                    {selectedNote.comments.length > 0 ? (
+                      <div
+                        style={{
+                          padding: "8px 10px",
+                          borderRadius: "6px",
+                          border: "1px solid #dbeafe",
+                          background: "#eff6ff",
+                          color: "#1d4ed8",
+                        }}
+                      >
+                        <strong style={{ display: "block", marginBottom: 6 }}>Comments:</strong>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {selectedNote.comments.map((comment, index) => (
+                            <div
+                              key={`${comment}-${index}`}
+                              style={{
+                                padding: "6px 8px",
+                                borderRadius: 6,
+                                background: "#ffffff",
+                                border: "1px solid #dbeafe",
+                                whiteSpace: "pre-wrap",
+                              }}
+                            >
+                              {comment}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {selectedNote.question ? (
+                        <>
+                          <textarea
+                            value={noteReplyDraft}
+                            onChange={(event) => setNoteReplyDraft(event.target.value)}
+                            placeholder="Write a reply to this question..."
+                            rows={4}
+                            style={{
+                              width: "100%",
+                              resize: "vertical",
+                              padding: "8px 10px",
+                              borderRadius: "6px",
+                              border: "1px solid #d1d5db",
+                              fontFamily: "inherit",
+                              fontSize: "13px",
+                              boxSizing: "border-box",
+                            }}
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveReply()}
+                            disabled={
+                              !selectedNote.question ||
+                              (!selectedNote.reply.trim() && !noteReplyDraft.trim())
+                            }
+                            style={{
+                              padding: "8px 12px",
+                              border: "1px solid #0b57d0",
+                              borderRadius: "6px",
+                              background: selectedNote.reply.trim() || noteReplyDraft.trim() ? "#0b57d0" : "#e5e7eb",
+                              color: selectedNote.reply.trim() || noteReplyDraft.trim() ? "#ffffff" : "#6b7280",
+                              cursor: selectedNote.reply.trim() || noteReplyDraft.trim() ? "pointer" : "not-allowed",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {selectedNote.reply ? "Update reply" : "Save reply"}
+                          </button>
+                        </>
+                      ) : null}
+
+                      {!selectedNote.question ? (
+                        <>
+                          <textarea
+                            value={commentDraft}
+                            onChange={(event) => setCommentDraft(event.target.value)}
+                            placeholder="Add an image comment..."
+                            rows={3}
+                            style={{
+                              width: "100%",
+                              resize: "vertical",
+                              padding: "8px 10px",
+                              borderRadius: "6px",
+                              border: "1px solid #d1d5db",
+                              fontFamily: "inherit",
+                              fontSize: "13px",
+                              boxSizing: "border-box",
+                            }}
+                          />
+
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveComment()}
+                            disabled={!commentDraft.trim()}
+                            style={{
+                              padding: "8px 12px",
+                              border: "1px solid #2563eb",
+                              borderRadius: "6px",
+                              background: commentDraft.trim() ? "#2563eb" : "#e5e7eb",
+                              color: commentDraft.trim() ? "#ffffff" : "#6b7280",
+                              cursor: commentDraft.trim() ? "pointer" : "not-allowed",
+                              fontWeight: 600,
+                            }}
+                          >
+                            Add comment
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ color: "#6b7280", fontSize: 12 }}>
+                      No saved question or comments for this image.
+                    </div>
+
+                    <textarea
+                      value={commentDraft}
+                      onChange={(event) => setCommentDraft(event.target.value)}
+                      placeholder="Add the first comment to this image..."
+                      rows={3}
+                      style={{
+                        width: "100%",
+                        resize: "vertical",
+                        padding: "8px 10px",
+                        borderRadius: "6px",
+                        border: "1px solid #d1d5db",
+                        fontFamily: "inherit",
+                        fontSize: "13px",
+                        boxSizing: "border-box",
+                      }}
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveComment()}
+                      disabled={!commentDraft.trim()}
+                      style={{
+                        padding: "8px 12px",
+                        border: "1px solid #2563eb",
+                        borderRadius: "6px",
+                        background: commentDraft.trim() ? "#2563eb" : "#e5e7eb",
+                        color: commentDraft.trim() ? "#ffffff" : "#6b7280",
+                        cursor: commentDraft.trim() ? "pointer" : "not-allowed",
+                        fontWeight: 600,
+                      }}
+                    >
+                      Add comment
+                    </button>
+                  </div>
+                )}
+              </dd>
+
+              <dt style={labelStyle}>Question queue</dt>
+              <dd style={{ ...valueStyle, display: "flex", flexDirection: "column", gap: 6 }}>
+                {noteImages.length > 0 ? (
+                  noteImages.map((image) => {
+                    const value = normalizeNoteValue(notes[image.path]);
+                    const hasQuestion = value.question.trim().length > 0;
+                    const hasReply = value.reply.trim().length > 0;
+                    const statusColor = hasReply ? "#16a34a" : hasQuestion ? "#d97706" : "#2563eb";
+                    const statusText = hasReply ? "answered" : hasQuestion ? "question" : "comment";
+                    return (
+                      <button
+                        key={image.path}
+                        type="button"
+                        onClick={() => {
+                          setSelectedImage(image);
+                          setSelectedFolderPath(getParentFolderPath(image.path));
+                          setNoteReplyDraft("");
+                          setCommentDraft("");
+                        }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 8,
+                          width: "100%",
+                          padding: "8px 10px",
+                          borderRadius: 6,
+                          border: selectedImage?.path === image.path ? "1px solid #d9e7ff" : "1px solid #e5e7eb",
+                          background: selectedImage?.path === image.path ? "#edf4ff" : "#ffffff",
+                          cursor: "pointer",
+                          textAlign: "left",
+                          color: "#374151",
+                        }}
+                      >
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {image.name || getFileName(image.path)}
+                        </span>
+                        <span style={{ color: statusColor, fontSize: 12 }} title={statusText}>
+                          {hasReply ? "✅" : hasQuestion ? "❓" : "✎"}
+                        </span>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div style={{ color: "#6b7280", fontSize: 12 }}>
+                    No images currently have questions or comments.
+                  </div>
+                )}
+              </dd>
             </dl>
           ) : (
             <p style={{ color: "#666666" }}>
@@ -777,6 +1186,46 @@ function getParentFolderPath(path: string): string | null {
 
 function isTiffPath(path: string): boolean {
   return /\.(tif|tiff)$/i.test(path);
+}
+
+function normalizeNoteValue(value: NoteValue | undefined): {
+  question: string;
+  reply: string;
+  comments: string[];
+  answered: boolean;
+} {
+  if (typeof value === "string") {
+    return {
+      question: value,
+      reply: "",
+      comments: [],
+      answered: false,
+    };
+  }
+
+  if (!value || typeof value !== "object") {
+    return {
+      question: "",
+      reply: "",
+      comments: [],
+      answered: false,
+    };
+  }
+
+  const question = value.question ?? value.note ?? value.comment ?? "";
+  const reply = value.reply ?? value.answer ?? "";
+  const comments = Array.isArray(value.comments)
+    ? value.comments.filter((comment): comment is string => typeof comment === "string" && comment.trim().length > 0).map((comment) => comment.trim())
+    : typeof value.comments === "string" && value.comments.trim().length > 0
+      ? [value.comments.trim()]
+      : [];
+
+  return {
+    question,
+    reply,
+    comments,
+    answered: Boolean(value.answered || reply),
+  };
 }
 
 async function tiffToPngDataUrl(tiffUrl: string): Promise<string> {
@@ -904,8 +1353,6 @@ async function fetchAndColorizeMask(maskUrl: string, isInstance = false): Promis
   return outCanvas.toDataURL("image/png");
 }
 
-
-
 function navigationButtonStyle(
   disabled: boolean
 ): React.CSSProperties {
@@ -1023,16 +1470,6 @@ function findOverlayUrls(
     const expected = getMaskPathFromImagePath(imagePath);
     if (expected) {
       maskUrl = masks[expected];
-    }
-  }
-
-  if (!instanceUrl) {
-    for (const [path, url] of Object.entries(masks)) {
-      const lower = path.toLowerCase();
-      if (lower.includes(base) && lower.includes("_instance")) {
-        instanceUrl = url;
-        break;
-      }
     }
   }
 

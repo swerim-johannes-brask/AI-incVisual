@@ -1,6 +1,7 @@
+import type { NoteValue } from "../services/azureBlobService";
 import type { TreeNode } from "../types/DatasetTree";
 
-type FilterMode = "all" | "annotated" | "unannotated";
+type FilterMode = "all" | "annotated" | "unannotated" | "notes";
 
 interface FolderTreeProps {
   node: TreeNode;
@@ -8,33 +9,85 @@ interface FolderTreeProps {
   selectedImagePath: string | null;
   expandedFolders: Set<string>;
   annotatedSet?: Set<string>;
+  noteSet?: Set<string>;
+  notes?: Record<string, NoteValue>;
   filterMode?: FilterMode;
   onFolderSelected: (path: string | null) => void;
   onToggleFolder: (path: string) => void;
   onImageSelected: (path: string) => void;
 }
 
-function matchesFilter(isAnnotated: boolean, filterMode: FilterMode = "all") {
+function normalizeNoteValue(value: NoteValue | undefined): {
+  question: string;
+  reply: string;
+  comments: string[];
+  answered: boolean;
+} {
+  if (typeof value === "string") {
+    return {
+      question: value,
+      reply: "",
+      comments: [],
+      answered: false,
+    };
+  }
+
+  if (!value || typeof value !== "object") {
+    return {
+      question: "",
+      reply: "",
+      comments: [],
+      answered: false,
+    };
+  }
+
+  const question = value.question ?? value.note ?? value.comment ?? "";
+  const reply = value.reply ?? value.answer ?? "";
+  const comments = Array.isArray(value.comments)
+    ? value.comments.filter((comment): comment is string => typeof comment === "string" && comment.trim().length > 0).map((comment) => comment.trim())
+    : typeof value.comments === "string" && value.comments.trim().length > 0
+      ? [value.comments.trim()]
+      : [];
+
+  return {
+    question,
+    reply,
+    comments,
+    answered: Boolean(value.answered || reply),
+  };
+}
+
+function matchesFilter(
+  isAnnotated: boolean,
+  hasNote: boolean,
+  filterMode: FilterMode = "all"
+) {
   if (filterMode === "all") return true;
-  return filterMode === "annotated" ? isAnnotated : !isAnnotated;
+  if (filterMode === "notes") return hasNote;
+  if (filterMode === "annotated") return isAnnotated;
+  return !isAnnotated;
 }
 
 function treeHasVisibleContent(
   node: TreeNode,
   filterMode: FilterMode,
-  annotatedSet?: Set<string>
+  annotatedSet?: Set<string>,
+  noteSet?: Set<string>,
+  notes?: Record<string, NoteValue>
 ): boolean {
   if (
     node.images.some((image) => {
       const fullPath = node.path === "" ? image : `${node.path}/${image}`;
-      return matchesFilter(Boolean(annotatedSet?.has(fullPath)), filterMode);
+      const isAnnotated = Boolean(annotatedSet?.has(fullPath));
+      const hasNote = Boolean(noteSet?.has(fullPath) || notes?.[fullPath]);
+      return matchesFilter(isAnnotated, hasNote, filterMode);
     })
   ) {
     return true;
   }
 
   return node.children.some((child) =>
-    treeHasVisibleContent(child, filterMode, annotatedSet)
+    treeHasVisibleContent(child, filterMode, annotatedSet, noteSet, notes)
   );
 }
 
@@ -45,6 +98,8 @@ function TreeNodeView({
   selectedImagePath,
   expandedFolders,
   annotatedSet,
+  noteSet,
+  notes,
   filterMode = "all",
   onFolderSelected,
   onToggleFolder,
@@ -56,12 +111,14 @@ function TreeNodeView({
   selectedImagePath: string | null;
   expandedFolders: Set<string>;
   annotatedSet?: Set<string>;
+  noteSet?: Set<string>;
+  notes?: Record<string, NoteValue>;
   filterMode?: FilterMode;
   onFolderSelected: (path: string | null) => void;
   onToggleFolder: (path: string) => void;
   onImageSelected: (path: string) => void;
 }) {
-  if (!treeHasVisibleContent(node, filterMode, annotatedSet)) {
+  if (!treeHasVisibleContent(node, filterMode, annotatedSet, noteSet, notes)) {
     return null;
   }
 
@@ -158,6 +215,8 @@ function TreeNodeView({
               selectedImagePath={selectedImagePath}
               expandedFolders={expandedFolders}
               annotatedSet={annotatedSet}
+              noteSet={noteSet}
+              notes={notes}
               filterMode={filterMode}
               onFolderSelected={onFolderSelected}
               onToggleFolder={onToggleFolder}
@@ -172,8 +231,15 @@ function TreeNodeView({
           const fullPath = node.path === "" ? image : `${node.path}/${image}`;
           const isSelectedImage = selectedImagePath === fullPath;
           const isAnnotated = Boolean(annotatedSet?.has(fullPath));
+          const hasNote = Boolean(noteSet?.has(fullPath) || notes?.[fullPath]);
+          const noteMeta = normalizeNoteValue(notes?.[fullPath]);
+          const hasQuestion = Boolean(noteMeta.question.trim());
+          const hasReply = Boolean(noteMeta.reply.trim());
+          const hasComments = noteMeta.comments.length > 0;
+          const icon = hasReply ? "✅" : hasQuestion ? "❓" : hasComments ? "✎" : "";
+          const iconColor = hasReply ? "#16a34a" : hasQuestion ? "#d97706" : hasComments ? "#2563eb" : "transparent";
 
-          if (!matchesFilter(isAnnotated, filterMode)) {
+          if (!matchesFilter(isAnnotated, hasNote, filterMode)) {
             return null;
           }
 
@@ -199,6 +265,18 @@ function TreeNodeView({
               }}
             >
               <span style={{ width: 14, textAlign: "center", color: isAnnotated ? "#0b9538" : "transparent" }}>{isAnnotated ? "●" : ""}</span>
+              <span
+                style={{
+                  width: 18,
+                  textAlign: "center",
+                  color: iconColor,
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}
+                title={hasReply ? "Answered question" : hasQuestion ? "Question" : hasComments ? "Comment" : ""}
+              >
+                {icon}
+              </span>
               <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{image}</span>
             </div>
           );
@@ -213,6 +291,8 @@ export default function FolderTree({
   selectedImagePath,
   expandedFolders,
   annotatedSet,
+  noteSet,
+  notes,
   filterMode = "all",
   onFolderSelected,
   onToggleFolder,
@@ -253,6 +333,8 @@ export default function FolderTree({
           selectedImagePath={selectedImagePath}
           expandedFolders={expandedFolders}
           annotatedSet={annotatedSet}
+          noteSet={noteSet}
+          notes={notes}
           filterMode={filterMode}
           onFolderSelected={onFolderSelected}
           onToggleFolder={onToggleFolder}
@@ -271,6 +353,8 @@ export default function FolderTree({
               selectedImagePath={selectedImagePath}
               expandedFolders={expandedFolders}
               annotatedSet={annotatedSet}
+              noteSet={noteSet}
+              notes={notes}
               filterMode={filterMode}
               onFolderSelected={onFolderSelected}
               onToggleFolder={onToggleFolder}
@@ -282,8 +366,15 @@ export default function FolderTree({
             const fullPath = `${rawRoot.path}/${image}`;
             const isSelectedImage = selectedImagePath === fullPath;
             const isAnnotated = Boolean(annotatedSet?.has(fullPath));
+            const hasNote = Boolean(noteSet?.has(fullPath) || notes?.[fullPath]);
+            const noteMeta = normalizeNoteValue(notes?.[fullPath]);
+            const hasQuestion = Boolean(noteMeta.question.trim());
+            const hasReply = Boolean(noteMeta.reply.trim());
+            const hasComments = noteMeta.comments.length > 0;
+            const icon = hasReply ? "✅" : hasQuestion ? "❓" : hasComments ? "✎" : "";
+            const iconColor = hasReply ? "#16a34a" : hasQuestion ? "#d97706" : hasComments ? "#2563eb" : "transparent";
 
-            if (!matchesFilter(isAnnotated, filterMode)) {
+            if (!matchesFilter(isAnnotated, hasNote, filterMode)) {
               return null;
             }
 
@@ -309,6 +400,18 @@ export default function FolderTree({
                 }}
               >
                 <span style={{ width: 14, textAlign: "center", color: isAnnotated ? "#0b9538" : "transparent" }}>{isAnnotated ? "●" : ""}</span>
+                <span
+                  style={{
+                    width: 18,
+                    textAlign: "center",
+                    color: iconColor,
+                    fontSize: 12,
+                    fontWeight: 700,
+                  }}
+                  title={hasReply ? "Answered question" : hasQuestion ? "Question" : hasComments ? "Comment" : ""}
+                >
+                  {icon}
+                </span>
                 <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{image}</span>
               </div>
             );
