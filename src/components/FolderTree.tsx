@@ -91,6 +91,32 @@ function treeHasVisibleContent(
   );
 }
 
+function getAnnotatedNodeCount(
+  node: TreeNode,
+  annotatedSet?: Set<string>
+): number {
+  const directAnnotated = node.images.reduce((total, image) => {
+    const fullPath = node.path === "" ? image : `${node.path}/${image}`;
+    return total + (annotatedSet?.has(fullPath) ? 1 : 0);
+  }, 0);
+
+  return (
+    directAnnotated +
+    node.children.reduce(
+      (total, child) => total + getAnnotatedNodeCount(child, annotatedSet),
+      0
+    )
+  );
+}
+
+function getFolderCountLabel(node: TreeNode, annotatedSet?: Set<string>) {
+  if (!annotatedSet) {
+    return String(node.count);
+  }
+
+  return `${node.count}/${getAnnotatedNodeCount(node, annotatedSet)}`;
+}
+
 function TreeNodeView({
   node,
   level = 0,
@@ -150,7 +176,7 @@ function TreeNodeView({
           <span style={{ fontSize: 13 }}>📁</span>
           <span>All images</span>
           <span style={{ marginLeft: "auto", color: "#6b7280", fontSize: 12 }}>
-            {node.count}
+            {getFolderCountLabel(node, annotatedSet)}
           </span>
         </div>
       ) : (
@@ -199,7 +225,7 @@ function TreeNodeView({
           >
             <span style={{ fontSize: 13 }}>📁</span>
             <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{node.name}</span>
-            <span style={{ marginLeft: "auto", color: "#6b7280", fontSize: 12 }}>{node.count}</span>
+            <span style={{ marginLeft: "auto", color: "#6b7280", fontSize: 12 }}>{getFolderCountLabel(node, annotatedSet)}</span>
           </div>
         </div>
       )}
@@ -324,7 +350,7 @@ export default function FolderTree({
         >
           <span style={{ fontSize: 13 }}>📁</span>
           <span>raw</span>
-          <span style={{ marginLeft: "auto", color: "#6b7280", fontSize: 12 }}>{rawRoot.count}</span>
+          <span style={{ marginLeft: "auto", color: "#6b7280", fontSize: 12 }}>{getFolderCountLabel(rawRoot, annotatedSet)}</span>
         </div>
       ) : (
         <TreeNodeView

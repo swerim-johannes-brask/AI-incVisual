@@ -377,6 +377,13 @@ export default function App() {
 
     const existing = normalizeNoteValue(notes[path]);
     setSelectedFolderPath(getParentFolderPath(path));
+    setExpandedFolders((current) => {
+      const next = new Set(current);
+      for (const folder of getAncestorFolderPaths(path)) {
+        next.add(folder);
+      }
+      return next;
+    });
     setImageLoadError(false);
     setSelectedImage(image);
     setNoteReplyDraft(existing.reply);
@@ -484,6 +491,14 @@ export default function App() {
     const nextReply = normalizeNoteValue(notes[nextImage.path]).reply;
     setImageLoadError(false);
     setSelectedImage(nextImage);
+    setSelectedFolderPath(getParentFolderPath(nextImage.path));
+    setExpandedFolders((current) => {
+      const next = new Set(current);
+      for (const folder of getAncestorFolderPaths(nextImage.path)) {
+        next.add(folder);
+      }
+      return next;
+    });
     setNoteReplyDraft(nextReply);
     setCommentDraft("");
   };
@@ -500,6 +515,14 @@ export default function App() {
     const nextReply = normalizeNoteValue(notes[nextImage.path]).reply;
     setImageLoadError(false);
     setSelectedImage(nextImage);
+    setSelectedFolderPath(getParentFolderPath(nextImage.path));
+    setExpandedFolders((current) => {
+      const next = new Set(current);
+      for (const folder of getAncestorFolderPaths(nextImage.path)) {
+        next.add(folder);
+      }
+      return next;
+    });
     setNoteReplyDraft(nextReply);
     setCommentDraft("");
   };
@@ -511,6 +534,20 @@ export default function App() {
       void connectToContainer();
     }
   };
+
+  useEffect(() => {
+    if (!selectedImage) {
+      return;
+    }
+
+    const element = document.getElementById(
+      `file-${encodeURIComponent(selectedImage.path)}`
+    );
+
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [selectedImage, expandedFolders]);
 
   return (
     <div
@@ -1095,6 +1132,13 @@ export default function App() {
                         onClick={() => {
                           setSelectedImage(image);
                           setSelectedFolderPath(getParentFolderPath(image.path));
+                          setExpandedFolders((current) => {
+                            const next = new Set(current);
+                            for (const folder of getAncestorFolderPaths(image.path)) {
+                              next.add(folder);
+                            }
+                            return next;
+                          });
                           setNoteReplyDraft("");
                           setCommentDraft("");
                         }}
@@ -1413,4 +1457,20 @@ function findOverlayUrls(
   }
 
   return { maskUrl, instanceUrl };
+}
+
+function getAncestorFolderPaths(imagePath: string): string[] {
+  const paths: string[] = [];
+  let current = imagePath;
+
+  while (true) {
+    current = getParentFolderPath(current);
+    if (!current) {
+      break;
+    }
+
+    paths.push(current);
+  }
+
+  return paths;
 }
