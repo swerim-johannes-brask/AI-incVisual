@@ -1461,15 +1461,16 @@ function findOverlayUrls(
 
 function getAncestorFolderPaths(imagePath: string): string[] {
   const paths: string[] = [];
-  let current = imagePath;
+  let current: string | null = imagePath;
 
-  while (true) {
-    current = getParentFolderPath(current);
-    if (!current) {
+  while (current) {
+    const parent = getParentFolderPath(current);
+    if (!parent) {
       break;
     }
 
-    paths.push(current);
+    paths.push(parent);
+    current = parent;
   }
 
   return paths;
