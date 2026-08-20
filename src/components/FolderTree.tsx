@@ -150,7 +150,7 @@ function TreeNodeView({
           <span style={{ fontSize: 13 }}>📁</span>
           <span>All images</span>
           <span style={{ marginLeft: "auto", color: "#6b7280", fontSize: 12 }}>
-            {node.count} / {node.annotatedCount ?? 0}
+            {node.count}
           </span>
         </div>
       ) : (
@@ -199,7 +199,7 @@ function TreeNodeView({
           >
             <span style={{ fontSize: 13 }}>📁</span>
             <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{node.name}</span>
-            <span style={{ marginLeft: "auto", color: "#6b7280", fontSize: 12 }}>{node.count} / {node.annotatedCount ?? 0}</span>
+            <span style={{ marginLeft: "auto", color: "#6b7280", fontSize: 12 }}>{node.count}</span>
           </div>
         </div>
       )}
@@ -324,7 +324,7 @@ export default function FolderTree({
         >
           <span style={{ fontSize: 13 }}>📁</span>
           <span>raw</span>
-          <span style={{ marginLeft: "auto", color: "#6b7280", fontSize: 12 }}>{rawRoot.count} / {rawRoot.annotatedCount ?? 0}</span>
+          <span style={{ marginLeft: "auto", color: "#6b7280", fontSize: 12 }}>{rawRoot.count}</span>
         </div>
       ) : (
         <TreeNodeView

@@ -250,10 +250,8 @@ export default function App() {
       setNotes(normalizedNotes);
       setNoteSet(nextNoteSet);
 
-      const annotatedTree = computeAnnotatedCounts(builtTree, annotated);
-
       setImages(validImages);
-      setTree(annotatedTree);
+      setTree(builtTree);
       setExpandedFolders(new Set());
       setSelectedFolderPath(rootFolder);
 
@@ -585,10 +583,32 @@ export default function App() {
           padding: "8px 16px",
           background: "#f5f5f5",
           borderBottom: "1px solid #dddddd",
-          fontSize: "14px",
+          fontSize: "12px",
+          display: "flex",
+          alignItems: "center",
+          gap: "16px",
+          justifyContent: "space-between",
         }}
       >
-        {status}
+        <span>{status}</span>
+        {selectedImage && (
+          <div style={{ display: "flex", gap: 12, alignItems: "center", fontSize: "11px" }}>
+            <div>
+              <strong style={{ color: "#6b7280", fontSize: "10px" }}>PATH:</strong>{" "}
+              <span style={{ color: "#555555", overflowWrap: "anywhere" }}>
+                {selectedImage.path}
+              </span>
+            </div>
+            <a
+              href={selectedImage.url}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "#2563eb", textDecoration: "none", fontSize: "11px", whiteSpace: "nowrap" }}
+            >
+              Open →
+            </a>
+          </div>
+        )}
       </div>
 
       <div
@@ -856,57 +876,14 @@ export default function App() {
         <aside
           style={{
             minWidth: 0,
-            padding: "16px",
+            padding: "12px 8px",
             overflow: "auto",
             borderLeft: "1px solid #dddddd",
           }}
         >
-          <h2
-            style={{
-              margin: "0 0 16px",
-              fontSize: "18px",
-            }}
-          >
-            Image Information
-          </h2>
-
           {selectedImage ? (
-            <dl style={{ margin: 0 }}>
-              <dt style={labelStyle}>File</dt>
-              <dd style={valueStyle}>
-                {selectedImage.name ||
-                  getFileName(selectedImage.path)}
-              </dd>
-
-              <dt style={labelStyle}>Path</dt>
-              <dd
-                style={{
-                  ...valueStyle,
-                  overflowWrap: "anywhere",
-                }}
-              >
-                {selectedImage.path}
-              </dd>
-
-              <dt style={labelStyle}>Position</dt>
-              <dd style={valueStyle}>
-                {selectedImageIndex + 1} / {visibleImages.length}
-              </dd>
-
-              <dt style={labelStyle}>Image URL</dt>
-              <dd style={valueStyle}>
-                <a
-                  href={selectedImage.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open image in new tab
-                </a>
-              </dd>
-
-              <dt style={labelStyle}>Questions & comments</dt>
-              <dd style={{ ...valueStyle, display: "flex", flexDirection: "column", gap: 10 }}>
-                {selectedNote && (selectedNote.question || selectedNote.comments.length > 0 || selectedNote.reply) ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {selectedNote && (selectedNote.question || selectedNote.comments.length > 0 || selectedNote.reply) ? (
                   <>
                     {selectedNote.question ? (
                       <div
@@ -921,7 +898,7 @@ export default function App() {
                       >
                         <div
                           style={{
-                            fontSize: 11,
+                            fontSize: 9,
                             fontWeight: 700,
                             color: selectedNote.reply ? "#166534" : "#c2410c",
                             marginBottom: 4,
@@ -987,7 +964,7 @@ export default function App() {
                             value={noteReplyDraft}
                             onChange={(event) => setNoteReplyDraft(event.target.value)}
                             placeholder="Write a reply to this question..."
-                            rows={4}
+                            rows={3}
                             style={{
                               width: "100%",
                               resize: "vertical",
@@ -995,7 +972,7 @@ export default function App() {
                               borderRadius: "6px",
                               border: "1px solid #d1d5db",
                               fontFamily: "inherit",
-                              fontSize: "13px",
+                              fontSize: "11px",
                               boxSizing: "border-box",
                             }}
                           />
@@ -1028,7 +1005,7 @@ export default function App() {
                             value={commentDraft}
                             onChange={(event) => setCommentDraft(event.target.value)}
                             placeholder="Add an image comment..."
-                            rows={3}
+                            rows={2}
                             style={{
                               width: "100%",
                               resize: "vertical",
@@ -1036,7 +1013,7 @@ export default function App() {
                               borderRadius: "6px",
                               border: "1px solid #d1d5db",
                               fontFamily: "inherit",
-                              fontSize: "13px",
+                              fontSize: "11px",
                               boxSizing: "border-box",
                             }}
                           />
@@ -1071,7 +1048,7 @@ export default function App() {
                       value={commentDraft}
                       onChange={(event) => setCommentDraft(event.target.value)}
                       placeholder="Add the first comment to this image..."
-                      rows={3}
+                      rows={2}
                       style={{
                         width: "100%",
                         resize: "vertical",
@@ -1079,7 +1056,7 @@ export default function App() {
                         borderRadius: "6px",
                         border: "1px solid #d1d5db",
                         fontFamily: "inherit",
-                        fontSize: "13px",
+                        fontSize: "11px",
                         boxSizing: "border-box",
                       }}
                     />
@@ -1102,10 +1079,8 @@ export default function App() {
                     </button>
                   </div>
                 )}
-              </dd>
 
-              <dt style={labelStyle}>Question queue</dt>
-              <dd style={{ ...valueStyle, display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
                 {noteImages.length > 0 ? (
                   noteImages.map((image) => {
                     const value = normalizeNoteValue(notes[image.path]);
@@ -1152,8 +1127,8 @@ export default function App() {
                     No images currently have questions or comments.
                   </div>
                 )}
-              </dd>
-            </dl>
+              </div>
+            </div>
           ) : (
             <p style={{ color: "#666666" }}>
               No image selected.
@@ -1366,17 +1341,6 @@ function navigationButtonStyle(
   };
 }
 
-const labelStyle: React.CSSProperties = {
-  marginTop: "16px",
-  marginBottom: "4px",
-  fontWeight: 700,
-};
-
-const valueStyle: React.CSSProperties = {
-  margin: 0,
-  color: "#555555",
-};
-
 function getPreferredRootFolder(images: DatasetImage[]): string | null {
   const rawFolder = images.find((image) =>
     image.path.split("/").some((segment) => segment.toLowerCase() === "raw")
@@ -1418,31 +1382,6 @@ function getMaskPathFromImagePath(imagePath: string): string | null {
   }
 
   return null;
-}
-
-function computeAnnotatedCounts(node: TreeNode, annotated: Set<string>): TreeNode {
-  let count = 0;
-  let annotatedCount = 0;
-
-  const children = node.children.map((child) => {
-    const childNode = computeAnnotatedCounts(child, annotated);
-    count += childNode.count;
-    annotatedCount += childNode.annotatedCount ?? 0;
-    return childNode;
-  });
-
-  count += node.images.length;
-  for (const img of node.images) {
-    const fullPath = node.path === "" ? img : `${node.path}/${img}`;
-    if (annotated.has(fullPath)) annotatedCount++;
-  }
-
-  return {
-    ...node,
-    children,
-    count,
-    annotatedCount,
-  };
 }
 
 function findOverlayUrls(
