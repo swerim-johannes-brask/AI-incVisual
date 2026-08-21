@@ -18,6 +18,11 @@ export type NoteValue =
       comments?: string[] | string;
     };
 
+export interface InclusionDictionaryEntry {
+  id: number;
+  name: string;
+}
+
 function shouldIncludeBlob(blobName: string): boolean {
   const segments = blobName
     .split("/")
@@ -132,4 +137,41 @@ export async function saveNotes(
       blobContentType: "application/json",
     },
   });
+}
+
+export async function loadInclusionDictionary(
+  sasUrl: string
+): Promise<InclusionDictionaryEntry[]> {
+  const client = new ContainerClient(sasUrl.trim());
+
+  try {
+    const blobClient = client.getBlobClient("metadata/inclusion_dictionary.json");
+    const response = await fetch(blobClient.url);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!Array.isArray(data)) {
+      return [];
+    }
+
+    return data
+      .filter(
+        (item): item is InclusionDictionaryEntry =>
+          !!item &&
+          typeof item === "object" &&
+          typeof (item as { id?: unknown }).id === "number" &&
+          typeof (item as { name?: unknown }).name === "string"
+      )
+      .map((item) => ({
+        id: item.id,
+        name: item.name.trim() || `ID ${item.id}`,
+      }))
+      .sort((a, b) => a.id - b.id);
+  } catch (error) {
+    console.warn("Could not load metadata/inclusion_dictionary.json", error);
+    return [];
+  }
 }
