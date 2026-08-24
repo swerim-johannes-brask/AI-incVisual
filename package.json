@@ -15,6 +15,7 @@
     "@emotion/styled": "^11.14.1",
     "@mui/material": "^9.3.1",
     "@upng/upng-js": "^2.2.2",
+    "fast-png": "^8.0.0",
     "react": "^19.2.8",
     "react-complex-tree": "^2.6.3",
     "react-dom": "^19.2.8",

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { decode } from "fast-png";
 import UTIF from "utif";
 import FolderTree from "./components/FolderTree";
 import {
@@ -51,12 +52,7 @@ export default function App() {
   const [maskIdsInImage, setMaskIdsInImage] = useState<Set<number>>(new Set());
   
   const [isLegendCollapsed, setIsLegendCollapsed] = useState(false);
-  // 320px (right sidebar) + 160px (legend width) + 20px (margin) = 500px from the right
-  const [legendPosition, setLegendPosition] = useState({ 
-    x: window.innerWidth - 500, 
-    y: 80 
-  });
-  const [legendDragOffset, setLegendDragOffset] = useState<{ x: number; y: number } | null>(null);
+  
   const imagePanelRef = useRef<HTMLDivElement | null>(null);
 
   const selectedNote = useMemo(() => {
@@ -111,8 +107,8 @@ export default function App() {
           }
 
           if (instanceUrl) {
-            const { url } = await fetchAndColorizeMask(instanceUrl, true);
-            if (!isCancelled) setInstanceOverlayUrl(url);
+              const ov = await fetchAndDrawBoundingBoxes(instanceUrl);
+              if (!isCancelled) setInstanceOverlayUrl(ov);
           }
         } catch (err) {
           console.warn("Failed to load mask overlays:", err);
@@ -474,39 +470,6 @@ export default function App() {
     return Array.from(byId.values()).sort((a, b) => a.id - b.id);
   }, [inclusionDictionary, maskIdsInImage]);
 
-  const handleLegendPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest("button")) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    setLegendDragOffset({
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    });
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const handleLegendPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!legendDragOffset) return;
-    
-    // Constrain to the entire browser window instead of the image panel
-    const nextX = Math.min(
-      Math.max(event.clientX - legendDragOffset.x, 0),
-      Math.max(window.innerWidth - (isLegendCollapsed ? 80 : 160), 0)
-    );
-    const nextY = Math.min(
-      Math.max(event.clientY - legendDragOffset.y, 0),
-      Math.max(window.innerHeight - (isLegendCollapsed ? 40 : 250), 0)
-    );
-    
-    setLegendPosition({ x: nextX, y: nextY });
-  };
-
-  const handleLegendPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!legendDragOffset) return;
-    setLegendDragOffset(null);
-    event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-
   return (
     <div
       style={{
@@ -665,138 +628,157 @@ export default function App() {
                 <div
                   ref={imagePanelRef}
                   style={{
-                    position: "relative",
                     width: "100%",
                     height: "100%",
                     display: "flex",
-                    justifyContent: "center",
-                    alignItems: "center",
+                    flexDirection: "row",
+                    background: "#ffffff",
+                    boxShadow: "0 2px 12px rgba(0, 0, 0, 0.12)",
+                    overflow: "hidden",
                   }}
                 >
-                  <img
-                    key={`${selectedImage.path}-base`}
-                    src={imagePreviewUrl ?? selectedImage.url}
-                    alt={selectedImage.name || getFileName(selectedImage.path)}
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      height: "100%",
-                      objectFit: "contain",
-                      boxShadow: "0 2px 12px rgba(0, 0, 0, 0.12)",
-                      background: "#ffffff",
-                    }}
-                  />
-
-                  {maskOverlayUrl && showMaskOverlay && (
+                  {/* IMAGE AREA */}
+                  <div style={{
+                    flex: 1,
+                    position: "relative",
+                    display: "flex",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    minWidth: 0, // Prevents flexbox from overflowing
+                  }}>
                     <img
-                      key={`${selectedImage.path}-mask`}
-                      src={maskOverlayUrl}
-                      alt="mask overlay"
+                      key={`${selectedImage.path}-base`}
+                      src={imagePreviewUrl ?? selectedImage.url}
+                      alt={selectedImage.name || getFileName(selectedImage.path)}
                       style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
+                        display: "block",
                         width: "100%",
                         height: "100%",
                         objectFit: "contain",
-                        pointerEvents: "none",
-                        opacity: 0.9,
                       }}
                     />
-                  )}
 
-                  {instanceOverlayUrl && showInstanceOverlay && (
-                    <img
-                      key={`${selectedImage.path}-instance`}
-                      src={instanceOverlayUrl}
-                      alt="instance overlay"
-                      style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "contain",
-                        pointerEvents: "none",
-                        opacity: 0.95,
-                      }}
-                    />
-                  )}
+                    {maskOverlayUrl && showMaskOverlay && (
+                      <img
+                        key={`${selectedImage.path}-mask`}
+                        src={maskOverlayUrl}
+                        alt="mask overlay"
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "contain",
+                          pointerEvents: "none",
+                          opacity: 0.9,
+                        }}
+                      />
+                    )}
 
-                  {/* DRAGGABLE LEGEND */}
+                    {instanceOverlayUrl && showInstanceOverlay && (
+                      <img
+                        key={`${selectedImage.path}-instance`}
+                        src={instanceOverlayUrl}
+                        alt="instance overlay"
+                        style={{
+                          position: "absolute",
+                          top: 0,
+                          left: 0,
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "contain",
+                          pointerEvents: "none",
+                          opacity: 0.95,
+                        }}
+                      />
+                    )}
+                  </div>
+
+                  {/* PINNED LEGEND */}
                   {inclusionDictionary.length > 0 && (
                     <div
-                      onPointerDown={handleLegendPointerDown}
-                      onPointerMove={handleLegendPointerMove}
-                      onPointerUp={handleLegendPointerUp}
                       style={{
-                        position: "fixed",
-                        left: legendPosition.x,
-                        top: legendPosition.y,
-                        width: isLegendCollapsed ? "auto" : "100px",
-                        background: "rgba(255, 255, 255, 0.95)",
-                        border: "1px solid #ccc",
-                        borderRadius: "6px",
-                        boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+                        width: isLegendCollapsed ? "40px" : "120px",
+                        height: "100%",
+                        background: "#f9f9f9",
+                        borderLeft: "1px solid #e5e7eb",
                         display: "flex",
                         flexDirection: "column",
-                        userSelect: "none",
-                        touchAction: "none",
-                        cursor: legendDragOffset ? "grabbing" : "grab",
-                        zIndex: 10,
+                        transition: "width 0.2s ease-in-out",
                       }}
                     >
                       <div
                         style={{
                           display: "flex",
-                          justifyContent: "space-between",
+                          justifyContent: isLegendCollapsed ? "center" : "space-between",
                           alignItems: "center",
-                          padding: "6px 10px",
-                          borderBottom: isLegendCollapsed ? "none" : "1px solid #eee",
-                          background: "#f9f9f9",
-                          borderTopLeftRadius: "6px",
-                          borderTopRightRadius: "6px",
+                          padding: "10px",
+                          borderBottom: "1px solid #e5e7eb",
+                          background: "#f1f5f9",
                         }}
                       >
-                        <span style={{ fontSize: "12px", fontWeight: 600 }}>Legend</span>
+                        {!isLegendCollapsed && (
+                          <span style={{ fontSize: "12px", fontWeight: 700, color: "#334155" }}>
+                            CLASS LEGEND
+                          </span>
+                        )}
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setIsLegendCollapsed(!isLegendCollapsed);
-                          }}
+                          onClick={() => setIsLegendCollapsed(!isLegendCollapsed)}
                           style={{
                             background: "none",
                             border: "none",
                             cursor: "pointer",
-                            fontSize: "16px",
+                            fontSize: "14px",
                             padding: "0 4px",
+                            color: "#64748b",
                           }}
+                          title={isLegendCollapsed ? "Expand Legend" : "Collapse Legend"}
                         >
-                          {isLegendCollapsed ? "+" : "-"}
+                          {isLegendCollapsed ? "◀" : "▶"}
                         </button>
                       </div>
 
                       {!isLegendCollapsed && (
-                        <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: "6px", maxHeight: "300px", overflowY: "auto" }}>
+                        <div
+                          style={{
+                            padding: "12px",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "8px",
+                            overflowY: "auto",
+                            flex: 1,
+                          }}
+                        >
                           {legendEntries.map((entry) => {
                             const color = getColorForId(entry.id);
                             const isPresent = maskIdsInImage.has(entry.id);
                             return (
-                              <div key={entry.id} style={{ display: "flex", alignItems: "center", gap: "8px", opacity: isPresent ? 1 : 0.5 }}>
+                              <div
+                                key={entry.id}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "10px",
+                                  opacity: isPresent ? 1 : 0.4,
+                                }}
+                              >
                                 <div
                                   style={{
                                     width: "14px",
                                     height: "14px",
                                     backgroundColor: `rgb(${color.join(",")})`,
-                                    border: "1px solid #999",
-                                    borderRadius: "2px",
+                                    border: "1px solid #94a3b8",
+                                    borderRadius: "3px",
+                                    flexShrink: 0,
                                   }}
                                 />
                                 <span
                                   style={{
-                                    fontSize: "11px",
-                                    fontWeight: isPresent ? "bold" : "normal",
-                                    textDecoration: isPresent ? "underline" : "none",
+                                    fontSize: "12px",
+                                    fontWeight: isPresent ? 600 : 400,
+                                    color: "#334155",
+                                    wordBreak: "break-word",
                                   }}
                                 >
                                   {entry.id} - {entry.name}
@@ -845,7 +827,7 @@ export default function App() {
                   onChange={(e) => setShowInstanceOverlay(e.target.checked)}
                   style={{ marginRight: 6 }}
                 />
-                Show instances
+                Show BB
               </label>
             </div>
 
@@ -1273,4 +1255,59 @@ function getAncestorFolderPaths(imagePath: string): string[] {
     current = parent;
   }
   return paths;
+}
+
+async function fetchAndDrawBoundingBoxes(instanceUrl: string): Promise<string> {
+  const res = await fetch(instanceUrl);
+  if (!res.ok) throw new Error(`Failed to fetch instance mask: ${res.statusText}`);
+
+  const buffer = await res.arrayBuffer();
+  // Decode the raw 16-bit PNG data
+  const png = decode(buffer);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = png.width;
+  canvas.height = png.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas not supported");
+
+  const boxes = new Map<number, { minX: number; minY: number; maxX: number; maxY: number }>();
+  
+  // png.data will accurately preserve the 16-bit integers
+  const data = png.data;
+  const width = png.width;
+  const height = png.height;
+  const channels = png.channels; // 1 for grayscale
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * channels;
+      const id = data[idx];
+
+      if (id === 0) continue; // Skip background
+
+      if (!boxes.has(id)) {
+        boxes.set(id, { minX: x, minY: y, maxX: x, maxY: y });
+      } else {
+        const box = boxes.get(id)!;
+        if (x < box.minX) box.minX = x;
+        if (x > box.maxX) box.maxX = x;
+        if (y < box.minY) box.minY = y;
+        if (y > box.maxY) box.maxY = y;
+      }
+    }
+  }
+
+  // Draw the crisp bounding boxes onto a transparent background
+  ctx.clearRect(0, 0, width, height);
+  ctx.strokeStyle = "#000000"; // Bright neon green
+  ctx.lineWidth = 2;
+
+  for (const box of boxes.values()) {
+    const w = box.maxX - box.minX;
+    const h = box.maxY - box.minY;
+    ctx.strokeRect(box.minX, box.minY, w || 1, h || 1);
+  }
+
+  return canvas.toDataURL("image/png");
 }
