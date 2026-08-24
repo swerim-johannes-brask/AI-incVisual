@@ -50,6 +50,9 @@ export default function App() {
   
   const [inclusionDictionary, setInclusionDictionary] = useState<InclusionDictionaryEntry[]>([]);
   const [maskIdsInImage, setMaskIdsInImage] = useState<Set<number>>(new Set());
+
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const imageCache = useRef<Record<string, { image: string | null; mask: string | null; instance: string | null; ids: number[] }>>({});
   
   const [isLegendCollapsed, setIsLegendCollapsed] = useState(false);
   
@@ -74,51 +77,72 @@ export default function App() {
 
     const loadPreview = async () => {
       if (!selectedImage) {
-        setImagePreviewUrl(null);
-        setMaskOverlayUrl(null);
-        setInstanceOverlayUrl(null);
-        setMaskIdsInImage(new Set());
+        setImagePreviewUrl(null); setMaskOverlayUrl(null); setInstanceOverlayUrl(null); setMaskIdsInImage(new Set());
+        return;
+      }
+
+      // 1. Check if we already processed this image
+      if (imageCache.current[selectedImage.path]) {
+        const cached = imageCache.current[selectedImage.path];
+        setImagePreviewUrl(cached.image);
+        setMaskOverlayUrl(cached.mask);
+        setInstanceOverlayUrl(cached.instance);
+        setMaskIdsInImage(new Set(cached.ids));
+        setImageLoadError(false);
         return;
       }
 
       try {
         setImageLoadError(false);
+        let currentImage = null;
+        let currentMask = null;
+        let currentInstance = null;
+        let currentIds: number[] = [];
 
+        // 2. Load Base Image
         if (isTiffPath(selectedImage.path)) {
-          const pngUrl = await tiffToPngDataUrl(selectedImage.url);
-          if (!isCancelled) setImagePreviewUrl(pngUrl);
+          currentImage = await tiffToPngDataUrl(selectedImage.url);
+          if (!isCancelled) setImagePreviewUrl(currentImage);
         } else {
-          if (!isCancelled) setImagePreviewUrl(selectedImage.url);
+          currentImage = selectedImage.url;
+          if (!isCancelled) setImagePreviewUrl(currentImage);
         }
 
+        // 3. Load Overlays
         try {
-          setMaskOverlayUrl(null);
-          setInstanceOverlayUrl(null);
-          setMaskIdsInImage(new Set());
-
+          setMaskOverlayUrl(null); setInstanceOverlayUrl(null); setMaskIdsInImage(new Set());
           const { maskUrl, instanceUrl } = findOverlayUrls(selectedImage.path, masks);
 
           if (maskUrl) {
             const { url, presentIds } = await fetchAndColorizeMask(maskUrl);
+            currentMask = url;
+            currentIds = presentIds;
             if (!isCancelled) {
-              setMaskOverlayUrl(url);
-              setMaskIdsInImage(new Set(presentIds));
+              setMaskOverlayUrl(currentMask);
+              setMaskIdsInImage(new Set(currentIds));
             }
           }
 
           if (instanceUrl) {
-              const ov = await fetchAndDrawBoundingBoxes(instanceUrl);
-              if (!isCancelled) setInstanceOverlayUrl(ov);
+            currentInstance = await fetchAndDrawBoundingBoxes(instanceUrl);
+            if (!isCancelled) setInstanceOverlayUrl(currentInstance);
           }
         } catch (err) {
           console.warn("Failed to load mask overlays:", err);
         }
+
+        // 4. Save to Cache for instant loading next time!
+        if (!isCancelled) {
+          imageCache.current[selectedImage.path] = {
+            image: currentImage,
+            mask: currentMask,
+            instance: currentInstance,
+            ids: currentIds
+          };
+        }
       } catch (error) {
         console.error("Failed to render image preview:", error);
-        if (!isCancelled) {
-          setImageLoadError(true);
-          setImagePreviewUrl(null);
-        }
+        if (!isCancelled) { setImageLoadError(true); setImagePreviewUrl(null); }
       }
     };
 
@@ -638,14 +662,17 @@ export default function App() {
                   }}
                 >
                   {/* IMAGE AREA */}
-                  <div style={{
-                    flex: 1,
-                    position: "relative",
-                    display: "flex",
-                    justifyContent: "center",
-                    alignItems: "center",
-                    minWidth: 0, // Prevents flexbox from overflowing
-                  }}>
+                  <div
+                    onDoubleClick={() => setIsFullscreen(true)} // <-- ADD THIS 
+                    style={{
+                      flex: 1,
+                      position: "relative",
+                      display: "flex",
+                      justifyContent: "center",
+                      alignItems: "center",
+                      minWidth: 0, // Prevents flexbox from overflowing
+                      cursor: "zoom-in" // <-- ADD THIS
+                    }}>
                     <img
                       key={`${selectedImage.path}-base`}
                       src={imagePreviewUrl ?? selectedImage.url}
@@ -1066,6 +1093,55 @@ export default function App() {
           )}
         </aside>
       </main>
+
+      {/* FULLSCREEN MODAL */}
+      {isFullscreen && selectedImage && (
+        <div
+          style={{
+            position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh",
+            background: "rgba(0, 0, 0, 0.95)", zIndex: 9999,
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center"
+          }}
+        >
+          {/* Close Button */}
+          <button
+            onClick={() => setIsFullscreen(false)}
+            style={{
+              position: "absolute", top: "20px", right: "30px",
+              background: "none", border: "none", color: "#ffffff",
+              fontSize: "36px", cursor: "pointer", zIndex: 10000
+            }}
+          >
+            ✕
+          </button>
+
+          {/* Modal Image Area */}
+          <div style={{ position: "relative", width: "90vw", height: "85vh", display: "flex", justifyContent: "center" }}>
+            <img src={imagePreviewUrl ?? selectedImage.url} alt="fullscreen base" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+            
+            {maskOverlayUrl && showMaskOverlay && (
+              <img src={maskOverlayUrl} alt="fullscreen mask" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "contain", opacity: 0.9, pointerEvents: "none" }} />
+            )}
+            
+            {instanceOverlayUrl && showInstanceOverlay && (
+              <img src={instanceOverlayUrl} alt="fullscreen instances" style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "contain", opacity: 0.95, pointerEvents: "none" }} />
+            )}
+          </div>
+
+          {/* Modal Controls */}
+          <div style={{ display: "flex", gap: "20px", marginTop: "20px", background: "#ffffff", padding: "10px 24px", borderRadius: "8px", boxShadow: "0 4px 12px rgba(0,0,0,0.2)" }}>
+            <label style={{ fontSize: 14, fontWeight: 600, color: "#333", cursor: "pointer" }}>
+              <input type="checkbox" checked={showMaskOverlay} onChange={(e) => setShowMaskOverlay(e.target.checked)} style={{ marginRight: 8 }} />
+              Show mask
+            </label>
+            <label style={{ fontSize: 14, fontWeight: 600, color: "#333", cursor: "pointer" }}>
+              <input type="checkbox" checked={showInstanceOverlay} onChange={(e) => setShowInstanceOverlay(e.target.checked)} style={{ marginRight: 8 }} />
+              Show BB
+            </label>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
