@@ -497,12 +497,18 @@ export default function App() {
   return (
     <div
       style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: "100vw",
         height: "100vh",
         display: "flex",
         flexDirection: "column",
         fontFamily: '"Segoe UI", system-ui, -apple-system, sans-serif',
         color: "#242424",
         background: "#ffffff",
+        margin: 0,
+        padding: 0,
       }}
     >
       <header
@@ -554,37 +560,37 @@ export default function App() {
         role="status"
         aria-live="polite"
         style={{
-          padding: "8px 16px",
+          padding: "4px 16px",
           background: "#f5f5f5",
           borderBottom: "1px solid #dddddd",
           fontSize: "12px",
-          display: "flex",
+          display: "grid",
+          gridTemplateColumns: "1fr auto 1fr",
           alignItems: "center",
           gap: "16px",
-          justifyContent: "space-between",
         }}
       >
-        <span>{status}</span>
-        {selectedImage && (
-          <div style={{ display: "flex", gap: 12, alignItems: "center", fontSize: "11px" }}>
-            <div>
-              <strong style={{ color: "#6b7280", fontSize: "10px" }}>PATH:</strong>{" "}
-              <span style={{ color: "#555555", overflowWrap: "anywhere" }}>{selectedImage.path}</span>
-            </div>
-            <a
-              href={selectedImage.url}
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: "#2563eb", textDecoration: "none", fontSize: "11px", whiteSpace: "nowrap" }}
-            >
-              Open →
-            </a>
-          </div>
-        )}
-      </div>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {status}
+        </span>
+        
+        <span style={{ fontWeight: 600, color: "#444" }}>
+          Images: {visibleImages.length}
+        </span>
 
-      <div style={{ padding: "8px 16px", borderBottom: "1px solid #dddddd", fontSize: "14px", fontWeight: 600 }}>
-        Images: {visibleImages.length}
+        <div style={{ display: "flex", gap: 12, alignItems: "center", fontSize: "11px", justifyContent: "flex-end", minWidth: 0 }}>
+          {selectedImage && (
+            <>
+              <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <strong style={{ color: "#6b7280", fontSize: "10px" }}>PATH:</strong>{" "}
+                <span style={{ color: "#555555" }}>{selectedImage.path}</span>
+              </div>
+              <a href={selectedImage.url} target="_blank" rel="noreferrer" style={{ color: "#2563eb", textDecoration: "none", fontSize: "11px", whiteSpace: "nowrap" }}>
+                Open →
+              </a>
+            </>
+          )}
+        </div>
       </div>
 
       <main
@@ -826,39 +832,29 @@ export default function App() {
 
           <div
             style={{
-              minHeight: "52px",
+              minHeight: "28px",
               display: "flex",
               justifyContent: "center",
               alignItems: "center",
-              gap: "12px",
-              padding: "8px 16px",
+              gap: "8px",
+              padding: "4px 12px",
               borderTop: "1px solid #dddddd",
               background: "#ffffff",
             }}
           >
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginRight: 8 }}>
-              <label style={{ fontSize: 12, color: "#444" }}>
-                <input
-                  type="checkbox"
-                  checked={showMaskOverlay}
-                  onChange={(e) => setShowMaskOverlay(e.target.checked)}
-                  style={{ marginRight: 6 }}
-                />
-                Show mask
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginRight: 4 }}>
+              <label style={{ fontSize: 10, color: "#444", display: "flex", alignItems: "center", cursor: "pointer" }}>
+                <input type="checkbox" checked={showMaskOverlay} onChange={(e) => setShowMaskOverlay(e.target.checked)} style={{ marginRight: 4, width: 12, height: 12 }} />
+                Mask
               </label>
 
-              <label style={{ fontSize: 12, color: "#444" }}>
-                <input
-                  type="checkbox"
-                  checked={showInstanceOverlay}
-                  onChange={(e) => setShowInstanceOverlay(e.target.checked)}
-                  style={{ marginRight: 6 }}
-                />
-                Show BB
+              <label style={{ fontSize: 10, color: "#444", display: "flex", alignItems: "center", cursor: "pointer" }}>
+                <input type="checkbox" checked={showInstanceOverlay} onChange={(e) => setShowInstanceOverlay(e.target.checked)} style={{ marginRight: 4, width: 12, height: 12 }} />
+                BB
               </label>
             </div>
 
-            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
               {(["all", "annotated", "unannotated", "notes"] as const).map((mode) => (
                 <button
                   key={mode}
@@ -868,22 +864,23 @@ export default function App() {
                     border: filterMode === mode ? "1px solid #0b57d0" : "1px solid #d1d5db",
                     background: filterMode === mode ? "#edf4ff" : "#ffffff",
                     color: filterMode === mode ? "#0b57d0" : "#374151",
-                    borderRadius: 6,
-                    padding: "6px 10px",
-                    fontSize: 12,
+                    borderRadius: 4,
+                    padding: "2px 6px",
+                    fontSize: 10,
+                    fontWeight: filterMode === mode ? 600 : 400,
                     cursor: "pointer",
                   }}
                 >
-                  {mode === "all" ? "All" : mode === "annotated" ? "Annotated" : mode === "unannotated" ? "Unannotated" : "Notes"}
+                  {mode === "all" ? "All" : mode === "annotated" ? "Ann." : mode === "unannotated" ? "Unann." : "Notes"}
                 </button>
               ))}
             </div>
 
             <button type="button" onClick={selectPreviousImage} disabled={selectedImageIndex <= 0} style={navigationButtonStyle(selectedImageIndex <= 0)}>
-              Previous
+              Prev
             </button>
 
-            <span style={{ minWidth: "90px", textAlign: "center", fontSize: "14px" }}>
+            <span style={{ minWidth: "60px", textAlign: "center", fontSize: "11px", fontWeight: 500 }}>
               {selectedImageIndex >= 0 ? `${selectedImageIndex + 1} / ${visibleImages.length}` : `0 / ${visibleImages.length}`}
             </span>
 
@@ -898,145 +895,158 @@ export default function App() {
           </div>
         </section>
 
-        <aside style={{ minWidth: 0, padding: "12px 8px", overflow: "auto", borderLeft: "1px solid #dddddd" }}>
+        <aside
+          style={{
+            minWidth: 0,
+            display: "flex",
+            flexDirection: "column",
+            borderLeft: "1px solid #dddddd",
+            background: "#ffffff",
+            overflow: "hidden",
+          }}
+        >
           {selectedImage ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {selectedNote && (selectedNote.question || selectedNote.comments.length > 0 || selectedNote.reply) ? (
-                <>
-                  {selectedNote.question ? (
-                    <div
+            <>
+              {/* TOP ZONE: Locked to exactly 45% height */}
+              <div
+                style={{
+                  padding: "12px 10px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                  flex: "0 0 40%", // strictly locks height to 45% of the sidebar
+                  overflowY: "auto", // internal scrollbar for long text
+                  borderBottom: "2px solid #e5e7eb",
+                }}
+              >
+                {selectedNote && (selectedNote.question || selectedNote.comments.length > 0 || selectedNote.reply) ? (
+                  <>
+                    {selectedNote.question ? (
+                      <div style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid #e5e7eb", background: selectedNote.reply ? "#f0fdf4" : "#fff7ed", color: "#1f2937", whiteSpace: "pre-wrap", fontSize: "11px" }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: selectedNote.reply ? "#166534" : "#c2410c", marginBottom: 4, textTransform: "uppercase" }}>
+                          {selectedNote.reply ? "Answered question" : "Question"}
+                        </div>
+                        {selectedNote.question}
+                      </div>
+                    ) : null}
+
+                    {selectedNote.reply ? (
+                      <div style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid #d1fae5", background: "#ecfdf5", color: "#065f46", whiteSpace: "pre-wrap", fontSize: "11px" }}>
+                        <strong style={{ display: "block", marginBottom: 4, fontSize: "10px", textTransform: "uppercase" }}>Reply</strong>
+                        {selectedNote.reply}
+                      </div>
+                    ) : null}
+
+                    {selectedNote.comments.length > 0 ? (
+                      <div style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid #dbeafe", background: "#eff6ff", color: "#1d4ed8", fontSize: "11px" }}>
+                        <strong style={{ display: "block", marginBottom: 6, fontSize: "10px", textTransform: "uppercase" }}>Comments</strong>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {selectedNote.comments.map((comment, index) => (
+                            <div key={`${comment}-${index}`} style={{ padding: "6px 8px", borderRadius: 6, background: "#ffffff", border: "1px solid #dbeafe", whiteSpace: "pre-wrap" }}>
+                              {comment}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: "auto" }}>
+                      {selectedNote.question ? (
+                        <>
+                          <textarea
+                            value={noteReplyDraft}
+                            onChange={(event) => setNoteReplyDraft(event.target.value)}
+                            placeholder="Write a reply to this question..."
+                            rows={2}
+                            style={{ width: "100%", resize: "vertical", padding: "6px 8px", borderRadius: "6px", border: "1px solid #d1d5db", fontFamily: "inherit", fontSize: "11px", boxSizing: "border-box" }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveReply()}
+                            disabled={!selectedNote.question || (!selectedNote.reply.trim() && !noteReplyDraft.trim())}
+                            style={{
+                              padding: "6px 12px", border: "1px solid #0b57d0", borderRadius: "6px",
+                              background: selectedNote.reply.trim() || noteReplyDraft.trim() ? "#0b57d0" : "#e5e7eb",
+                              color: selectedNote.reply.trim() || noteReplyDraft.trim() ? "#ffffff" : "#6b7280",
+                              cursor: selectedNote.reply.trim() || noteReplyDraft.trim() ? "pointer" : "not-allowed",
+                              fontWeight: 600, fontSize: "11px"
+                            }}
+                          >
+                            {selectedNote.reply ? "Update reply" : "Save reply"}
+                          </button>
+                        </>
+                      ) : null}
+
+                      {!selectedNote.question ? (
+                        <>
+                          <textarea
+                            value={commentDraft}
+                            onChange={(event) => setCommentDraft(event.target.value)}
+                            placeholder="Add an image comment..."
+                            rows={2}
+                            style={{ width: "100%", resize: "vertical", padding: "6px 8px", borderRadius: "6px", border: "1px solid #d1d5db", fontFamily: "inherit", fontSize: "11px", boxSizing: "border-box" }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void handleSaveComment()}
+                            disabled={!commentDraft.trim()}
+                            style={{
+                              padding: "6px 12px", border: "1px solid #2563eb", borderRadius: "6px",
+                              background: commentDraft.trim() ? "#2563eb" : "#e5e7eb",
+                              color: commentDraft.trim() ? "#ffffff" : "#6b7280",
+                              cursor: commentDraft.trim() ? "pointer" : "not-allowed",
+                              fontWeight: 600, fontSize: "11px"
+                            }}
+                          >
+                            Add comment
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ color: "#6b7280", fontSize: 11 }}>No saved question or comments for this image.</div>
+                    <textarea
+                      value={commentDraft}
+                      onChange={(event) => setCommentDraft(event.target.value)}
+                      placeholder="Add the first comment to this image..."
+                      rows={2}
+                      style={{ width: "100%", resize: "vertical", padding: "6px 8px", borderRadius: "6px", border: "1px solid #d1d5db", fontFamily: "inherit", fontSize: "11px", boxSizing: "border-box" }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveComment()}
+                      disabled={!commentDraft.trim()}
                       style={{
-                        padding: "8px 10px",
-                        borderRadius: "6px",
-                        border: "1px solid #e5e7eb",
-                        background: selectedNote.reply ? "#f0fdf4" : "#fff7ed",
-                        color: "#1f2937",
-                        whiteSpace: "pre-wrap",
+                        padding: "6px 12px", border: "1px solid #2563eb", borderRadius: "6px",
+                        background: commentDraft.trim() ? "#2563eb" : "#e5e7eb",
+                        color: commentDraft.trim() ? "#ffffff" : "#6b7280",
+                        cursor: commentDraft.trim() ? "pointer" : "not-allowed",
+                        fontWeight: 600, fontSize: "11px"
                       }}
                     >
-                      <div
-                        style={{
-                          fontSize: 9,
-                          fontWeight: 700,
-                          color: selectedNote.reply ? "#166534" : "#c2410c",
-                          marginBottom: 4,
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {selectedNote.reply ? "Answered question" : "Question"}
-                      </div>
-                      {selectedNote.question}
-                    </div>
-                  ) : null}
-
-                  {selectedNote.reply ? (
-                    <div style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid #d1fae5", background: "#ecfdf5", color: "#065f46", whiteSpace: "pre-wrap" }}>
-                      <strong style={{ display: "block", marginBottom: 4 }}>Reply:</strong>
-                      {selectedNote.reply}
-                    </div>
-                  ) : null}
-
-                  {selectedNote.comments.length > 0 ? (
-                    <div style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid #dbeafe", background: "#eff6ff", color: "#1d4ed8" }}>
-                      <strong style={{ display: "block", marginBottom: 6 }}>Comments:</strong>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {selectedNote.comments.map((comment, index) => (
-                          <div key={`${comment}-${index}`} style={{ padding: "6px 8px", borderRadius: 6, background: "#ffffff", border: "1px solid #dbeafe", whiteSpace: "pre-wrap" }}>
-                            {comment}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {selectedNote.question ? (
-                      <>
-                        <textarea
-                          value={noteReplyDraft}
-                          onChange={(event) => setNoteReplyDraft(event.target.value)}
-                          placeholder="Write a reply to this question..."
-                          rows={3}
-                          style={{ width: "100%", resize: "vertical", padding: "8px 10px", borderRadius: "6px", border: "1px solid #d1d5db", fontFamily: "inherit", fontSize: "11px", boxSizing: "border-box" }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => void handleSaveReply()}
-                          disabled={!selectedNote.question || (!selectedNote.reply.trim() && !noteReplyDraft.trim())}
-                          style={{
-                            padding: "8px 12px",
-                            border: "1px solid #0b57d0",
-                            borderRadius: "6px",
-                            background: selectedNote.reply.trim() || noteReplyDraft.trim() ? "#0b57d0" : "#e5e7eb",
-                            color: selectedNote.reply.trim() || noteReplyDraft.trim() ? "#ffffff" : "#6b7280",
-                            cursor: selectedNote.reply.trim() || noteReplyDraft.trim() ? "pointer" : "not-allowed",
-                            fontWeight: 600,
-                          }}
-                        >
-                          {selectedNote.reply ? "Update reply" : "Save reply"}
-                        </button>
-                      </>
-                    ) : null}
-
-                    {!selectedNote.question ? (
-                      <>
-                        <textarea
-                          value={commentDraft}
-                          onChange={(event) => setCommentDraft(event.target.value)}
-                          placeholder="Add an image comment..."
-                          rows={2}
-                          style={{ width: "100%", resize: "vertical", padding: "8px 10px", borderRadius: "6px", border: "1px solid #d1d5db", fontFamily: "inherit", fontSize: "11px", boxSizing: "border-box" }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => void handleSaveComment()}
-                          disabled={!commentDraft.trim()}
-                          style={{
-                            padding: "8px 12px",
-                            border: "1px solid #2563eb",
-                            borderRadius: "6px",
-                            background: commentDraft.trim() ? "#2563eb" : "#e5e7eb",
-                            color: commentDraft.trim() ? "#ffffff" : "#6b7280",
-                            cursor: commentDraft.trim() ? "pointer" : "not-allowed",
-                            fontWeight: 600,
-                          }}
-                        >
-                          Add comment
-                        </button>
-                      </>
-                    ) : null}
+                      Add comment
+                    </button>
                   </div>
-                </>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <div style={{ color: "#6b7280", fontSize: 12 }}>No saved question or comments for this image.</div>
-                  <textarea
-                    value={commentDraft}
-                    onChange={(event) => setCommentDraft(event.target.value)}
-                    placeholder="Add the first comment to this image..."
-                    rows={2}
-                    style={{ width: "100%", resize: "vertical", padding: "8px 10px", borderRadius: "6px", border: "1px solid #d1d5db", fontFamily: "inherit", fontSize: "11px", boxSizing: "border-box" }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void handleSaveComment()}
-                    disabled={!commentDraft.trim()}
-                    style={{
-                      padding: "8px 12px",
-                      border: "1px solid #2563eb",
-                      borderRadius: "6px",
-                      background: commentDraft.trim() ? "#2563eb" : "#e5e7eb",
-                      color: commentDraft.trim() ? "#ffffff" : "#6b7280",
-                      cursor: commentDraft.trim() ? "pointer" : "not-allowed",
-                      fontWeight: 600,
-                    }}
-                  >
-                    Add comment
-                  </button>
-                </div>
-              )}
+                )}
+              </div>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+              {/* BOTTOM ZONE: Note Directory List */}
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: "auto",
+                  padding: "12px 10px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                  background: "#f9fafb"
+                }}
+              >
+                <div style={{ fontSize: "10px", fontWeight: 700, color: "#6b7280", textTransform: "uppercase", marginBottom: "4px" }}>
+                  Notes Directory
+                </div>
                 {noteImages.length > 0 ? (
                   noteImages.map((image) => {
                     const value = normalizeNoteValue(notes[image.path]);
@@ -1060,36 +1070,29 @@ export default function App() {
                           setCommentDraft("");
                         }}
                         style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 8,
-                          width: "100%",
-                          padding: "8px 10px",
-                          borderRadius: 6,
+                          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                          width: "100%", padding: "6px 8px", borderRadius: 6,
                           border: selectedImage?.path === image.path ? "1px solid #d9e7ff" : "1px solid #e5e7eb",
                           background: selectedImage?.path === image.path ? "#edf4ff" : "#ffffff",
-                          cursor: "pointer",
-                          textAlign: "left",
-                          color: "#374151",
+                          cursor: "pointer", textAlign: "left", color: "#374151",
                         }}
                       >
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "11px" }}>
                           {image.name || getFileName(image.path)}
                         </span>
-                        <span style={{ color: statusColor, fontSize: 12 }} title={statusText}>
+                        <span style={{ color: statusColor, fontSize: 11, flexShrink: 0 }} title={statusText}>
                           {hasReply ? "✅" : hasQuestion ? "❓" : "✎"}
                         </span>
                       </button>
                     );
                   })
                 ) : (
-                  <div style={{ color: "#6b7280", fontSize: 12 }}>No images currently have questions or comments.</div>
+                  <div style={{ color: "#6b7280", fontSize: 11 }}>No images currently have questions or comments.</div>
                 )}
               </div>
-            </div>
+            </>
           ) : (
-            <p style={{ color: "#666666" }}>No image selected.</p>
+            <p style={{ color: "#666666", padding: "12px", fontSize: "11px" }}>No image selected.</p>
           )}
         </aside>
       </main>
@@ -1273,7 +1276,15 @@ async function fetchAndColorizeMask(maskUrl: string, isInstance = false): Promis
 }
 
 function navigationButtonStyle(disabled: boolean): React.CSSProperties {
-  return { padding: "8px 14px", border: "1px solid #b3b3b3", borderRadius: "4px", background: disabled ? "#eeeeee" : "#ffffff", color: disabled ? "#888888" : "#242424", cursor: disabled ? "not-allowed" : "pointer" };
+  return { 
+    padding: "2px 8px", 
+    fontSize: "10px",
+    border: "1px solid #b3b3b3", 
+    borderRadius: "4px", 
+    background: disabled ? "#eeeeee" : "#ffffff", 
+    color: disabled ? "#888888" : "#242424", 
+    cursor: disabled ? "not-allowed" : "pointer" 
+  };
 }
 
 function getPreferredRootFolder(images: DatasetImage[]): string | null {
