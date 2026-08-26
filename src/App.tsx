@@ -1216,14 +1216,22 @@ function normalizeNoteValue(value: NoteValue | undefined): {
 } {
   if (typeof value === "string") return { question: value, reply: "", comments: [], answered: false };
   if (!value || typeof value !== "object") return { question: "", reply: "", comments: [], answered: false };
+  
   const question = value.question ?? value.note ?? value.comment ?? "";
   const reply = value.reply ?? value.answer ?? "";
+  
   const comments = Array.isArray(value.comments)
     ? value.comments.filter((comment): comment is string => typeof comment === "string" && comment.trim().length > 0).map((comment) => comment.trim())
     : typeof value.comments === "string" && value.comments.trim().length > 0
       ? [value.comments.trim()]
       : [];
-  return { question, reply, comments, answered: Boolean(value.answered || reply) };
+      
+  // NEW LOGIC: Respect the explicit boolean if it exists. Otherwise, fall back to checking the reply string.
+  const isAnswered = typeof value.answered === "boolean" 
+    ? value.answered 
+    : Boolean(reply);
+
+  return { question, reply, comments, answered: isAnswered };
 }
 
 async function tiffToPngDataUrl(tiffUrl: string): Promise<string> {
