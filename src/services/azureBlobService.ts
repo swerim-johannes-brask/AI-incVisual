@@ -105,7 +105,7 @@ export async function loadNotes(
 
   try {
     const blobClient = client.getBlobClient("metadata/notes.json");
-    const response = await fetch(blobClient.url);
+    const response = await fetch(blobClient.url, { cache: "no-store" });
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -146,7 +146,7 @@ export async function loadInclusionDictionary(
 
   try {
     const blobClient = client.getBlobClient("metadata/inclusion_dictionary.json");
-    const response = await fetch(blobClient.url);
+    const response = await fetch(blobClient.url, { cache: "no-store" });
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
