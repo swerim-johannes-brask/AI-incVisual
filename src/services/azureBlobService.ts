@@ -16,6 +16,7 @@ export type NoteValue =
       reply?: string;
       answered?: boolean;
       comments?: string[] | string;
+      flagged?: boolean; // <-- NEW
     };
 
 export interface InclusionDictionaryEntry {

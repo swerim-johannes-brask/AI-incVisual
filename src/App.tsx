@@ -14,7 +14,7 @@ import {
 import { buildTree } from "./services/treeBuilder";
 import type { TreeNode } from "./types/DatasetTree";
 
-type FilterMode = "all" | "annotated" | "unannotated" | "notes";
+type FilterMode = "all" | "annotated" | "unannotated" | "notes" | "flagged";
 
 interface DatasetImage {
   name: string;
@@ -164,12 +164,18 @@ export default function App() {
 
     if (filterMode === "all") return baseImages;
     if (filterMode === "notes") return baseImages.filter((image) => noteSet.has(image.path));
+    
+    // NEW: Handle the flagged filter mode!
+    if (filterMode === "flagged") return baseImages.filter((image) => {
+      const noteMeta = normalizeNoteValue(notes[image.path]);
+      return noteMeta.flagged;
+    });
 
     return baseImages.filter((image) => {
       const isAnnotated = annotatedSet.has(image.path);
       return filterMode === "annotated" ? isAnnotated : !isAnnotated;
     });
-  }, [images, selectedFolderPath, filterMode, annotatedSet, noteSet]);
+  }, [images, selectedFolderPath, filterMode, annotatedSet, noteSet, notes]); // <-- Added 'notes' to dependencies here!
 
   const selectedImageIndex = useMemo(() => {
     if (!selectedImage) return -1;
@@ -397,6 +403,33 @@ export default function App() {
       setStatus("Failed to save reply to notes.json.");
     }
   };
+
+  const handleToggleFlag = async () => {
+    if (!selectedImage) return;
+    const existing = normalizeNoteValue(notes[selectedImage.path]);
+    const newFlagState = !existing.flagged;
+
+    const existingObject = typeof notes[selectedImage.path] === 'object' ? notes[selectedImage.path] : {};
+    
+    const updatedNotes = {
+      ...notes,
+      [selectedImage.path]: {
+        ...(existingObject as object),
+        flagged: newFlagState,
+      } as NoteValue,
+    };
+
+    setNotes(updatedNotes);
+    
+    try {
+      await saveNotes(sasUrl.trim(), updatedNotes);
+      setStatus(newFlagState ? `Flagged ${selectedImage.name}` : `Removed flag from ${selectedImage.name}`);
+    } catch (error) {
+      console.error("Failed to save flag:", error);
+      setStatus("Failed to save flag to notes.json.");
+    }
+  };
+  
 
   const handleSaveComment = async () => {
     if (!selectedImage) return;
@@ -830,51 +863,51 @@ export default function App() {
             )}
           </div>
 
-          <div
-            style={{
-              minHeight: "28px",
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              gap: "8px",
-              padding: "4px 12px",
-              borderTop: "1px solid #dddddd",
-              background: "#ffffff",
-            }}
-          >
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginRight: 4 }}>
-              <label style={{ fontSize: 10, color: "#444", display: "flex", alignItems: "center", cursor: "pointer" }}>
-                <input type="checkbox" checked={showMaskOverlay} onChange={(e) => setShowMaskOverlay(e.target.checked)} style={{ marginRight: 4, width: 12, height: 12 }} />
-                Mask
-              </label>
+          <div style={{ minHeight: "28px", display: "flex", justifyContent: "center", alignItems: "center", gap: "8px", padding: "6px 12px", borderTop: "1px solid #334155", background: "#1e293b" }}>
+            
+            {/* NEW FLAG BUTTON */}
+            <button 
+              onClick={handleToggleFlag} 
+              disabled={!selectedImage}
+              style={{ 
+                background: "none", border: "none", cursor: selectedImage ? "pointer" : "not-allowed",
+                display: "flex", alignItems: "center", gap: 4, marginRight: 16,
+                color: selectedImage && normalizeNoteValue(notes[selectedImage.path]).flagged ? "#ef4444" : "#64748b",
+                fontWeight: 600, fontSize: "12px"
+              }}
+            >
+              {selectedImage && normalizeNoteValue(notes[selectedImage.path]).flagged ? "🚩" : "🏳️"}
+            </button>
 
-              <label style={{ fontSize: 10, color: "#444", display: "flex", alignItems: "center", cursor: "pointer" }}>
-                <input type="checkbox" checked={showInstanceOverlay} onChange={(e) => setShowInstanceOverlay(e.target.checked)} style={{ marginRight: 4, width: 12, height: 12 }} />
-                BB
+            <div style={{ display: "flex", gap: 12, alignItems: "center", marginRight: 8 }}>
+              <label style={{ fontSize: 11, color: "#cbd5e1", display: "flex", alignItems: "center", cursor: "pointer" }}>
+                <input type="checkbox" checked={showMaskOverlay} onChange={(e) => setShowMaskOverlay(e.target.checked)} style={{ marginRight: 6, accentColor: "#3b82f6" }} /> Mask
+              </label>
+              <label style={{ fontSize: 11, color: "#cbd5e1", display: "flex", alignItems: "center", cursor: "pointer" }}>
+                <input type="checkbox" checked={showInstanceOverlay} onChange={(e) => setShowInstanceOverlay(e.target.checked)} style={{ marginRight: 6, accentColor: "#3b82f6" }} /> BB
               </label>
             </div>
 
-            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-              {(["all", "annotated", "unannotated", "notes"] as const).map((mode) => (
+            {/* UPDATED FILTERS TO INCLUDE "flagged" */}
+            <div style={{ display: "flex", gap: 4, alignItems: "center", borderLeft: "1px solid #334155", paddingLeft: 12 }}>
+              {(["all", "annotated", "unannotated", "notes", "flagged"] as const).map((mode) => (
                 <button
                   key={mode}
                   type="button"
-                  onClick={() => setFilterMode(mode)}
+                  onClick={() => setFilterMode(mode as any)}
                   style={{
-                    border: filterMode === mode ? "1px solid #0b57d0" : "1px solid #d1d5db",
-                    background: filterMode === mode ? "#edf4ff" : "#ffffff",
-                    color: filterMode === mode ? "#0b57d0" : "#374151",
-                    borderRadius: 4,
-                    padding: "2px 6px",
-                    fontSize: 10,
-                    fontWeight: filterMode === mode ? 600 : 400,
-                    cursor: "pointer",
+                    border: filterMode === mode ? "1px solid #3b82f6" : "1px solid #475569",
+                    background: filterMode === mode ? "#1e3a8a" : "#0f172a",
+                    color: filterMode === mode ? "#bfdbfe" : "#94a3b8",
+                    borderRadius: 4, padding: "4px 8px", fontSize: 10, fontWeight: filterMode === mode ? 600 : 400, cursor: "pointer",
                   }}
                 >
-                  {mode === "all" ? "All" : mode === "annotated" ? "Ann." : mode === "unannotated" ? "Unann." : "Notes"}
+                  {mode === "all" ? "All" : mode === "annotated" ? "Ann." : mode === "unannotated" ? "Unann." : mode === "notes" ? "Notes" : "Flagged"}
                 </button>
               ))}
             </div>
+            
+            <div style={{ flex: 1 }} />
 
             <button type="button" onClick={selectPreviousImage} disabled={selectedImageIndex <= 0} style={navigationButtonStyle(selectedImageIndex <= 0)}>
               Prev
@@ -1213,9 +1246,10 @@ function normalizeNoteValue(value: NoteValue | undefined): {
   reply: string;
   comments: string[];
   answered: boolean;
+  flagged: boolean; // <-- NEW
 } {
-  if (typeof value === "string") return { question: value, reply: "", comments: [], answered: false };
-  if (!value || typeof value !== "object") return { question: "", reply: "", comments: [], answered: false };
+  if (typeof value === "string") return { question: value, reply: "", comments: [], answered: false, flagged: false };
+  if (!value || typeof value !== "object") return { question: "", reply: "", comments: [], answered: false, flagged: false };
   
   const question = value.question ?? value.note ?? value.comment ?? "";
   const reply = value.reply ?? value.answer ?? "";
@@ -1226,12 +1260,10 @@ function normalizeNoteValue(value: NoteValue | undefined): {
       ? [value.comments.trim()]
       : [];
       
-  // NEW LOGIC: Respect the explicit boolean if it exists. Otherwise, fall back to checking the reply string.
-  const isAnswered = typeof value.answered === "boolean" 
-    ? value.answered 
-    : Boolean(reply);
+  const isAnswered = typeof value.answered === "boolean" ? value.answered : Boolean(reply);
+  const flagged = Boolean(value.flagged); // <-- NEW
 
-  return { question, reply, comments, answered: isAnswered };
+  return { question, reply, comments, answered: isAnswered, flagged }; // <-- NEW
 }
 
 async function tiffToPngDataUrl(tiffUrl: string): Promise<string> {
