@@ -922,9 +922,16 @@ export default function App() {
                 {selectedNote && (selectedNote.question || selectedNote.comments.length > 0 || selectedNote.reply) ? (
                   <>
                     {selectedNote.question ? (
-                      <div style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid #e5e7eb", background: selectedNote.reply ? "#f0fdf4" : "#fff7ed", color: "#1f2937", whiteSpace: "pre-wrap", fontSize: "11px" }}>
-                        <div style={{ fontSize: 9, fontWeight: 700, color: selectedNote.reply ? "#166534" : "#c2410c", marginBottom: 4, textTransform: "uppercase" }}>
-                          {selectedNote.reply ? "Answered question" : "Question"}
+                      <div style={{ padding: "8px 10px", borderRadius: "6px", border: "1px solid #78350f", 
+                        background: selectedNote.answered ? "#064e3b" : "#451a03", // <-- Changed to .answered
+                        color: selectedNote.answered ? "#d1fae5" : "#fef3c7",      // <-- Changed to .answered
+                        whiteSpace: "pre-wrap", fontSize: "11px" 
+                      }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, 
+                          color: selectedNote.answered ? "#10b981" : "#f59e0b",    // <-- Changed to .answered
+                          marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.5px" 
+                        }}>
+                          {selectedNote.answered ? "Answered question" : "Question"} {/* <-- Changed to .answered */}
                         </div>
                         {selectedNote.question}
                       </div>
@@ -1048,12 +1055,26 @@ export default function App() {
                   Notes Directory
                 </div>
                 {noteImages.length > 0 ? (
-                  noteImages.map((image) => {
+                  // WE COPY AND SORT THE ARRAY BEFORE MAPPING:
+                  [...noteImages].sort((a, b) => {
+                    const valA = normalizeNoteValue(notes[a.path]);
+                    const valB = normalizeNoteValue(notes[b.path]);
+                    
+                    const isUnansweredA = valA.question.trim().length > 0 && valA.answered !== true;
+                    const isUnansweredB = valB.question.trim().length > 0 && valB.answered !== true;
+                    
+                    if (isUnansweredA && !isUnansweredB) return -1; // A goes to top
+                    if (!isUnansweredA && isUnansweredB) return 1;  // B goes to top
+                    return 0; // Keep normal order for everything else
+                    
+                  }).map((image) => {
                     const value = normalizeNoteValue(notes[image.path]);
                     const hasQuestion = value.question.trim().length > 0;
-                    const hasReply = value.reply.trim().length > 0;
-                    const statusColor = hasReply ? "#16a34a" : hasQuestion ? "#d97706" : "#2563eb";
-                    const statusText = hasReply ? "answered" : hasQuestion ? "question" : "comment";
+                    const isAnswered = value.answered === true; 
+                    
+                    const statusColor = isAnswered ? "#10b981" : hasQuestion ? "#f59e0b" : "#3b82f6";
+                    const statusText = isAnswered ? "answered" : hasQuestion ? "question" : "comment";
+                    
                     return (
                       <button
                         key={image.path}
@@ -1071,23 +1092,24 @@ export default function App() {
                         }}
                         style={{
                           display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-                          width: "100%", padding: "6px 8px", borderRadius: 6,
-                          border: selectedImage?.path === image.path ? "1px solid #d9e7ff" : "1px solid #e5e7eb",
-                          background: selectedImage?.path === image.path ? "#edf4ff" : "#ffffff",
-                          cursor: "pointer", textAlign: "left", color: "#374151",
+                          width: "100%", padding: "6px 8px", borderRadius: 4,
+                          border: selectedImage?.path === image.path ? "1px solid #3b82f6" : "1px solid #334155",
+                          background: selectedImage?.path === image.path ? "#1e3a8a" : "#1e293b",
+                          cursor: "pointer", textAlign: "left", color: "#e2e8f0",
                         }}
                       >
                         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "11px" }}>
                           {image.name || getFileName(image.path)}
                         </span>
+                        
                         <span style={{ color: statusColor, fontSize: 11, flexShrink: 0 }} title={statusText}>
-                          {hasReply ? "✅" : hasQuestion ? "❓" : "✎"}
+                          {isAnswered ? "✅" : hasQuestion ? "❓" : "✎"}
                         </span>
                       </button>
                     );
                   })
                 ) : (
-                  <div style={{ color: "#6b7280", fontSize: 11 }}>No images currently have questions or comments.</div>
+                  <div style={{ color: "#64748b", fontSize: 11 }}>No images currently have questions or comments.</div>
                 )}
               </div>
             </>
@@ -1224,7 +1246,7 @@ async function tiffToPngDataUrl(tiffUrl: string): Promise<string> {
 }
 
 async function fetchAndColorizeMask(maskUrl: string, isInstance = false): Promise<{ url: string; presentIds: number[] }> {
-  const res = await fetch(maskUrl);
+  const res = await fetch(maskUrl, { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch mask: ${res.statusText}`);
 
   const blob = await res.blob();
