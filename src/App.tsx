@@ -241,25 +241,13 @@ export default function App() {
       }
 
       const annotated = new Set<string>();
-      const maskPathsByName = new Map<string, string[]>();
-      for (const m of loadedMasks) {
-        const name = m.name;
-        const base = name.replace(/(_mask|_instance)?\.png$/i, "");
-        const arr = maskPathsByName.get(base) ?? [];
-        arr.push(m.path);
-        maskPathsByName.set(base, arr);
-      }
-
+      
       for (const img of validImages) {
-        const expected = getMaskPathFromImagePath(img.path);
-        if (expected && maskMap[expected]) {
+        // Only allow exact 1-to-1 path matches!
+        const expectedMask = getExpectedMaskPath(img.path, "_mask.png");
+        if (maskMap[expectedMask]) {
           annotated.add(img.path);
-          continue;
         }
-
-        const base = getBaseName(img.path);
-        const candidates = maskPathsByName.get(base) ?? [];
-        if (candidates.length > 0) annotated.add(img.path);
       }
 
       setMasks(maskMap);
@@ -1241,6 +1229,28 @@ function isTiffPath(path: string): boolean {
   return /\.(tif|tiff)$/i.test(path);
 }
 
+function getExpectedMaskPath(imagePath: string, suffix: "_mask.png" | "_instance.png"): string {
+  const segments = imagePath.split("/");
+  
+  // 1. Find where "raw" is in the folder tree and swap it to "masks"
+  const rawIndex = segments.findIndex((s) => s.toLowerCase() === "raw");
+  if (rawIndex !== -1) {
+    segments[rawIndex] = "masks";
+  } else {
+    // Fallback just in case "raw" is missing
+    segments.unshift("masks"); 
+  }
+  
+  // 2. Strip the old extension (.tiff, .bmp) and add the new suffix
+  const filename = segments[segments.length - 1];
+  const lastDotIndex = filename.lastIndexOf(".");
+  const baseName = lastDotIndex !== -1 ? filename.substring(0, lastDotIndex) : filename;
+  
+  segments[segments.length - 1] = `${baseName}${suffix}`;
+  
+  return segments.join("/");
+}
+
 function normalizeNoteValue(value: NoteValue | undefined): {
   question: string;
   reply: string;
@@ -1363,35 +1373,16 @@ function getBaseName(path: string): string {
   return file.replace(/\.[^.]+$/, "");
 }
 
-function getMaskPathFromImagePath(imagePath: string): string | null {
-  const segments = imagePath.split("/");
-  const rawIndex = segments.findIndex((s) => s.toLowerCase() === "raw");
-  const filename = segments[segments.length - 1];
-  const base = filename.replace(/\.[^.]+$/, "");
-  if (rawIndex !== -1) {
-    const maskSegments = [...segments];
-    maskSegments[rawIndex] = "masks";
-    maskSegments[maskSegments.length - 1] = `${base}_mask.png`;
-    return maskSegments.join("/");
-  }
-  return null;
-}
-
 function findOverlayUrls(imagePath: string, masks: Record<string, string>): { maskUrl?: string; instanceUrl?: string } {
-  const base = getBaseName(imagePath).toLowerCase();
-  let maskUrl: string | undefined;
-  let instanceUrl: string | undefined;
-  for (const [path, url] of Object.entries(masks)) {
-    const lower = path.toLowerCase();
-    if (!maskUrl && lower.includes(`${base}_mask`)) maskUrl = url;
-    if (!instanceUrl && lower.includes(`${base}_instance`)) instanceUrl = url;
-    if (maskUrl && instanceUrl) break;
-  }
-  if (!maskUrl) {
-    const expected = getMaskPathFromImagePath(imagePath);
-    if (expected) maskUrl = masks[expected];
-  }
-  return { maskUrl, instanceUrl };
+  // Calculate the exact paths we expect to find in Azure
+  const targetMaskPath = getExpectedMaskPath(imagePath, "_mask.png");
+  const targetInstancePath = getExpectedMaskPath(imagePath, "_instance.png");
+  
+  // Only return the URLs if the exact folder path matches
+  return {
+    maskUrl: masks[targetMaskPath],
+    instanceUrl: masks[targetInstancePath]
+  };
 }
 
 function getAncestorFolderPaths(imagePath: string): string[] {
