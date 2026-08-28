@@ -42,6 +42,7 @@ export default function App() {
   const [notes, setNotes] = useState<Record<string, NoteValue>>({});
   const [noteReplyDraft, setNoteReplyDraft] = useState("");
   const [commentDraft, setCommentDraft] = useState("");
+  const [selectedForDeletion, setSelectedForDeletion] = useState<Set<string>>(new Set());
   
   const [maskOverlayUrl, setMaskOverlayUrl] = useState<string | null>(null);
   const [instanceOverlayUrl, setInstanceOverlayUrl] = useState<string | null>(null);
@@ -352,6 +353,49 @@ export default function App() {
     setSelectedImage(image);
     setNoteReplyDraft(existing.reply);
     setCommentDraft("");
+  };
+
+  const handleDeleteSelectedNotes = async () => {
+    if (selectedForDeletion.size === 0) return;
+    
+    // 1. Show the confirmation popup!
+    const confirmed = window.confirm(
+      `You are about to delete notes for ${selectedForDeletion.size} image(s).\n\nThis will permanently remove their questions, replies, comments, and flags.\n\nAre you sure?`
+    );
+    if (!confirmed) return;
+
+    // 2. Remove them from the dictionary
+    const updatedNotes = { ...notes };
+    for (const path of selectedForDeletion) {
+      delete updatedNotes[path];
+    }
+
+    // 3. Recalculate the active notes set
+    const nextNoteSet = new Set<string>();
+    for (const [path, value] of Object.entries(updatedNotes)) {
+      const normalized = normalizeNoteValue(value);
+      if (normalized.question.trim() || normalized.comments.length > 0) nextNoteSet.add(path);
+    }
+
+    // 4. Update the UI
+    setNotes(updatedNotes);
+    setNoteSet(nextNoteSet);
+    setSelectedForDeletion(new Set()); // Clear checkboxes
+
+    // If the currently viewed image was just deleted, clear its drafts
+    if (selectedImage && selectedForDeletion.has(selectedImage.path)) {
+      setNoteReplyDraft("");
+      setCommentDraft("");
+    }
+
+    // 5. Save to Azure
+    try {
+      await saveNotes(sasUrl.trim(), updatedNotes);
+      setStatus(`Deleted notes for ${selectedForDeletion.size} images.`);
+    } catch (error) {
+      console.error("Failed to delete notes:", error);
+      setStatus("Failed to delete notes from Azure.");
+    }
   };
 
   const handleSaveReply = async () => {
@@ -1072,11 +1116,27 @@ export default function App() {
                   background: "#f9fafb"
                 }}
               >
-                <div style={{ fontSize: "10px", fontWeight: 700, color: "#6b7280", textTransform: "uppercase", marginBottom: "4px" }}>
-                  Notes Directory
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                  <div style={{ fontSize: "10px", fontWeight: 700, color: "#6b7280", textTransform: "uppercase" }}>
+                    Notes Directory
+                  </div>
+                  
+                  {/* NEW: Delete Button appears if items are checked */}
+                  {selectedForDeletion.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteSelectedNotes()}
+                      style={{
+                        padding: "2px 8px", fontSize: "10px", fontWeight: 600, color: "#ffffff",
+                        background: "#ef4444", border: "none", borderRadius: "4px", cursor: "pointer"
+                      }}
+                    >
+                      Delete Selected ({selectedForDeletion.size})
+                    </button>
+                  )}
                 </div>
+
                 {noteImages.length > 0 ? (
-                  // WE COPY AND SORT THE ARRAY BEFORE MAPPING:
                   [...noteImages].sort((a, b) => {
                     const valA = normalizeNoteValue(notes[a.path]);
                     const valB = normalizeNoteValue(notes[b.path]);
@@ -1084,49 +1144,63 @@ export default function App() {
                     const isUnansweredA = valA.question.trim().length > 0 && valA.answered !== true;
                     const isUnansweredB = valB.question.trim().length > 0 && valB.answered !== true;
                     
-                    if (isUnansweredA && !isUnansweredB) return -1; // A goes to top
-                    if (!isUnansweredA && isUnansweredB) return 1;  // B goes to top
-                    return 0; // Keep normal order for everything else
+                    if (isUnansweredA && !isUnansweredB) return -1;
+                    if (!isUnansweredA && isUnansweredB) return 1; 
+                    return 0;
                     
                   }).map((image) => {
                     const value = normalizeNoteValue(notes[image.path]);
                     const hasQuestion = value.question.trim().length > 0;
                     const isAnswered = value.answered === true; 
-                    
                     const statusColor = isAnswered ? "#10b981" : hasQuestion ? "#f59e0b" : "#3b82f6";
                     const statusText = isAnswered ? "answered" : hasQuestion ? "question" : "comment";
                     
                     return (
-                      <button
-                        key={image.path}
-                        type="button"
-                        onClick={() => {
-                          setSelectedImage(image);
-                          setSelectedFolderPath(getParentFolderPath(image.path));
-                          setExpandedFolders((current) => {
-                            const next = new Set(current);
-                            for (const folder of getAncestorFolderPaths(image.path)) next.add(folder);
-                            return next;
-                          });
-                          setNoteReplyDraft("");
-                          setCommentDraft("");
-                        }}
-                        style={{
-                          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-                          width: "100%", padding: "6px 8px", borderRadius: 4,
-                          border: selectedImage?.path === image.path ? "1px solid #3b82f6" : "1px solid #334155",
-                          background: selectedImage?.path === image.path ? "#1e3a8a" : "#1e293b",
-                          cursor: "pointer", textAlign: "left", color: "#e2e8f0",
-                        }}
-                      >
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "11px" }}>
-                          {image.name || getFileName(image.path)}
-                        </span>
+                      <div key={image.path} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        {/* NEW: The Checkbox */}
+                        <input
+                          type="checkbox"
+                          checked={selectedForDeletion.has(image.path)}
+                          onChange={(e) => {
+                            const next = new Set(selectedForDeletion);
+                            if (e.target.checked) next.add(image.path);
+                            else next.delete(image.path);
+                            setSelectedForDeletion(next);
+                          }}
+                          style={{ cursor: "pointer", accentColor: "#ef4444" }}
+                          title="Select for deletion"
+                        />
                         
-                        <span style={{ color: statusColor, fontSize: 11, flexShrink: 0 }} title={statusText}>
-                          {isAnswered ? "✅" : hasQuestion ? "❓" : "✎"}
-                        </span>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedImage(image);
+                            setSelectedFolderPath(getParentFolderPath(image.path));
+                            setExpandedFolders((current) => {
+                              const next = new Set(current);
+                              for (const folder of getAncestorFolderPaths(image.path)) next.add(folder);
+                              return next;
+                            });
+                            setNoteReplyDraft("");
+                            setCommentDraft("");
+                          }}
+                          style={{
+                            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                            flex: 1, padding: "6px 8px", borderRadius: 4,
+                            border: selectedImage?.path === image.path ? "1px solid #3b82f6" : "1px solid #334155",
+                            background: selectedImage?.path === image.path ? "#1e3a8a" : "#1e293b",
+                            cursor: "pointer", textAlign: "left", color: "#e2e8f0", minWidth: 0
+                          }}
+                        >
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "11px" }}>
+                            {image.name || getFileName(image.path)}
+                          </span>
+                          
+                          <span style={{ color: statusColor, fontSize: 11, flexShrink: 0 }} title={statusText}>
+                            {isAnswered ? "✅" : hasQuestion ? "❓" : "✎"}
+                          </span>
+                        </button>
+                      </div>
                     );
                   })
                 ) : (
