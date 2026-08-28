@@ -1368,10 +1368,6 @@ function getPreferredRootFolder(images: DatasetImage[]): string | null {
   return segments.slice(0, rawIndex + 1).join("/");
 }
 
-function getBaseName(path: string): string {
-  const file = path.split("/").pop() ?? path;
-  return file.replace(/\.[^.]+$/, "");
-}
 
 function findOverlayUrls(imagePath: string, masks: Record<string, string>): { maskUrl?: string; instanceUrl?: string } {
   // Calculate the exact paths we expect to find in Azure
