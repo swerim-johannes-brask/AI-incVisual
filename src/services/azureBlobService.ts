@@ -6,6 +6,8 @@ export interface ImageBlob {
   url: string;
 }
 
+export interface MetadataBlob extends ImageBlob {}
+
 export type NoteValue =
   | string
   | {
@@ -97,6 +99,27 @@ export async function loadMasks(
   }
 
   return masks.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export async function loadMetadata(
+  sasUrl: string
+): Promise<MetadataBlob[]> {
+  const client = new ContainerClient(sasUrl.trim());
+  const metadata: MetadataBlob[] = [];
+
+  for await (const blob of client.listBlobsFlat()) {
+    const name = blob.name.toLowerCase();
+    if (!name.includes("masks") || !name.endsWith("_meta.json")) continue;
+
+    const blobClient = client.getBlobClient(blob.name);
+    metadata.push({
+      name: blob.name.split("/").pop() ?? "",
+      path: blob.name,
+      url: blobClient.url,
+    });
+  }
+
+  return metadata.sort((a, b) => a.path.localeCompare(b.path));
 }
 
 export async function loadNotes(

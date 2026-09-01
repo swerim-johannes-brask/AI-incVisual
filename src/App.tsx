@@ -5,6 +5,7 @@ import FolderTree from "./components/FolderTree";
 import {
   loadImages,
   loadMasks,
+  loadMetadata,
   loadNotes,
   loadInclusionDictionary,
   saveNotes,
@@ -20,6 +21,26 @@ interface DatasetImage {
   name: string;
   path: string;
   url: string;
+}
+
+interface ParticleMetadata {
+  ID?: string | number;
+  Morphology?: Record<string, unknown>;
+  Chemistry?: Record<string, unknown>;
+  Classification?: Record<string, unknown>;
+  image_coordinates?: { x?: number; y?: number };
+  assigned_class?: string;
+  category_id?: number;
+  image_id?: number;
+  bbox?: number[];
+  pixel_size_um?: number;
+  magnification?: number;
+  [key: string]: unknown;
+}
+
+interface Ruler {
+  start: { x: number; y: number };
+  end: { x: number; y: number };
 }
 
 export default function App() {
@@ -51,6 +72,14 @@ export default function App() {
   
   const [inclusionDictionary, setInclusionDictionary] = useState<InclusionDictionaryEntry[]>([]);
   const [maskIdsInImage, setMaskIdsInImage] = useState<Set<number>>(new Set());
+  const [metadata, setMetadata] = useState<Record<string, ParticleMetadata[]>>({});
+  const [hoveredParticle, setHoveredParticle] = useState<{ particle: ParticleMetadata; x: number; y: number } | null>(null);
+  const [ruler, setRuler] = useState<Ruler | null>(null);
+  const [drawingRuler, setDrawingRuler] = useState<Ruler | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const imageAreaRef = useRef<HTMLDivElement | null>(null);
+  const metadataTooltipRef = useRef<HTMLDivElement | null>(null);
+  const rulerDragRef = useRef<{ mode: "draw" | "move"; anchor?: { x: number; y: number } } | null>(null);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const imageCache = useRef<Record<string, { image: string | null; mask: string | null; instance: string | null; ids: number[] }>>({});
@@ -79,6 +108,7 @@ export default function App() {
     const loadPreview = async () => {
       if (!selectedImage) {
         setImagePreviewUrl(null); setMaskOverlayUrl(null); setInstanceOverlayUrl(null); setMaskIdsInImage(new Set());
+        setHoveredParticle(null); setRuler(null);
         return;
       }
 
@@ -205,6 +235,8 @@ export default function App() {
       setInstanceOverlayUrl(null);
       setNoteReplyDraft("");
       setInclusionDictionary([]);
+      setMetadata({});
+      setRuler(null);
 
       // Load Inclusion Dictionary
       try {
@@ -231,6 +263,21 @@ export default function App() {
         maskMap[m.path] = m.url;
       }
 
+      const loadedMetadata = await loadMetadata(trimmedSasUrl);
+      const metadataMap: Record<string, ParticleMetadata[]> = {};
+      for (const item of loadedMetadata) {
+        try {
+          const response = await fetch(item.url, { cache: "no-store" });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data: unknown = await response.json();
+          if (!Array.isArray(data)) continue;
+          const imagePath = getImagePathFromMetadataPath(item.path, validImages);
+          if (imagePath) metadataMap[imagePath] = data.filter(isParticleMetadata);
+        } catch (error) {
+          console.warn(`Could not load particle metadata ${item.path}:`, error);
+        }
+      }
+
       const loadedNotes = await loadNotes(trimmedSasUrl);
       const normalizedNotes: Record<string, NoteValue> = {};
       const nextNoteSet = new Set<string>();
@@ -252,6 +299,7 @@ export default function App() {
       }
 
       setMasks(maskMap);
+      setMetadata(metadataMap);
       setAnnotatedSet(annotated);
       setNotes(normalizedNotes);
       setNoteSet(nextNoteSet);
@@ -559,6 +607,87 @@ export default function App() {
     return Array.from(byId.values()).sort((a, b) => a.id - b.id);
   }, [inclusionDictionary, maskIdsInImage]);
 
+  const currentMetadata = selectedImage ? metadata[selectedImage.path] ?? [] : [];
+  const pixelSizeUm = currentMetadata.find((item) => typeof item.pixel_size_um === "number")?.pixel_size_um;
+
+  const getImagePoint = (event: React.PointerEvent<HTMLDivElement>) => {
+    const rect = (imageAreaRef.current ?? event.currentTarget).getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
+      y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
+    };
+  };
+
+  const handleImagePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (currentMetadata.length === 0 || event.button !== 0) return;
+    const point = getImagePoint(event);
+    rulerDragRef.current = { mode: "draw" };
+    setDrawingRuler({ start: point, end: point });
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleImagePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const point = getImagePoint(event);
+    const active = rulerDragRef.current;
+    if (active?.mode === "draw" && drawingRuler) {
+      setDrawingRuler({ ...drawingRuler, end: point });
+      return;
+    }
+    if (active?.mode === "move" && drawingRuler && active.anchor) {
+      const dx = point.x - active.anchor.x;
+      const dy = point.y - active.anchor.y;
+      setDrawingRuler({
+        start: { x: drawingRuler.start.x + dx, y: drawingRuler.start.y + dy },
+        end: { x: drawingRuler.end.x + dx, y: drawingRuler.end.y + dy },
+      });
+      rulerDragRef.current = { mode: "move", anchor: point };
+    }
+  };
+
+  const finishRuler = () => {
+    if (rulerDragRef.current && drawingRuler) {
+      const dx = drawingRuler.end.x - drawingRuler.start.x;
+      const dy = drawingRuler.end.y - drawingRuler.start.y;
+      if (Math.hypot(dx, dy) > 0.005) setRuler(drawingRuler);
+    }
+    rulerDragRef.current = null;
+    setDrawingRuler(null);
+  };
+
+  const handleParticleHover = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (currentMetadata.length === 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const imageWidth = imageRef.current?.naturalWidth ?? 1;
+    const imageHeight = imageRef.current?.naturalHeight ?? 1;
+    const scale = Math.min(rect.width / imageWidth, rect.height / imageHeight);
+    const renderedWidth = imageWidth * scale;
+    const renderedHeight = imageHeight * scale;
+    const imageLeft = rect.left + (rect.width - renderedWidth) / 2;
+    const imageTop = rect.top + (rect.height - renderedHeight) / 2;
+    const point = {
+      x: (event.clientX - imageLeft) / renderedWidth,
+      y: (event.clientY - imageTop) / renderedHeight,
+    };
+    if (point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1) {
+      setHoveredParticle(null);
+      return;
+    }
+    const particle = currentMetadata.find((item) => {
+      const box = item.bbox;
+      return box && box.length >= 4 &&
+        point.x * imageWidth >= box[0] && point.x * imageWidth <= box[2] &&
+        point.y * imageHeight >= box[1] && point.y * imageHeight <= box[3];
+    });
+    if (particle) setHoveredParticle({ particle, x: event.clientX + 14, y: event.clientY + 14 });
+    else setHoveredParticle(null);
+  };
+
+  const handleImageWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (!hoveredParticle || !metadataTooltipRef.current) return;
+    event.preventDefault();
+    metadataTooltipRef.current.scrollTop += event.deltaY;
+  };
+
   return (
     <div
       style={{
@@ -641,6 +770,9 @@ export default function App() {
         
         <span style={{ fontWeight: 600, color: "#444" }}>
           Images: {visibleImages.length}
+          {selectedImage && (metadata[selectedImage.path]?.length ?? 0) > 0 && (
+            <span style={{ marginLeft: 10, color: "#047857" }}>Metadata present</span>
+          )}
         </span>
 
         <div style={{ display: "flex", gap: 12, alignItems: "center", fontSize: "11px", justifyContent: "flex-end", minWidth: 0 }}>
@@ -734,7 +866,15 @@ export default function App() {
                 >
                   {/* IMAGE AREA */}
                   <div
+                    ref={imageAreaRef}
                     onDoubleClick={() => setIsFullscreen(true)} // <-- ADD THIS 
+                    onPointerDown={handleImagePointerDown}
+                    onPointerMove={handleImagePointerMove}
+                    onPointerUp={finishRuler}
+                    onPointerCancel={finishRuler}
+                    onMouseMove={handleParticleHover}
+                    onMouseLeave={() => setHoveredParticle(null)}
+                    onWheel={handleImageWheel}
                     style={{
                       flex: 1,
                       position: "relative",
@@ -746,6 +886,7 @@ export default function App() {
                     }}>
                     <img
                       key={`${selectedImage.path}-base`}
+                      ref={imageRef}
                       src={imagePreviewUrl ?? selectedImage.url}
                       alt={selectedImage.name || getFileName(selectedImage.path)}
                       style={{
@@ -790,6 +931,93 @@ export default function App() {
                           opacity: 0.95,
                         }}
                       />
+                    )}
+
+                    {(ruler || drawingRuler) && (() => {
+                     const activeRuler = drawingRuler ?? ruler;
+                     if (!activeRuler) return null;
+                     const dx = activeRuler.end.x - activeRuler.start.x;
+                     const dy = activeRuler.end.y - activeRuler.start.y;
+                     const lengthPx = Math.hypot(dx, dy) * Math.max(imageRef.current?.naturalWidth ?? 0, imageRef.current?.naturalHeight ?? 0);
+                     const lengthUm = pixelSizeUm ? lengthPx * pixelSizeUm : null;
+                     return (
+                       <div
+                         onPointerDown={(event) => {
+                           if (!ruler) return;
+                           event.stopPropagation();
+                           const point = getImagePoint(event);
+                           rulerDragRef.current = { mode: "move", anchor: point };
+                           setDrawingRuler(ruler);
+                           event.currentTarget.setPointerCapture(event.pointerId);
+                         }}
+                         onContextMenu={(event) => {
+                           event.preventDefault();
+                           event.stopPropagation();
+                           setRuler(null);
+                           setDrawingRuler(null);
+                         }}
+                         title="Drag to move. Right-click to remove."
+                         style={{
+                           position: "absolute",
+                           left: `${activeRuler.start.x * 100}%`,
+                           top: `${activeRuler.start.y * 100}%`,
+                           width: `${Math.max(1, Math.hypot(dx, dy) * 100)}%`,
+                           height: "2px",
+                           background: "#dc2626",
+                           transformOrigin: "0 50%",
+                           transform: `rotate(${Math.atan2(dy, dx) * 180 / Math.PI}deg)`,
+                           cursor: ruler ? "move" : "crosshair",
+                           pointerEvents: "auto",
+                           zIndex: 4,
+                         }}
+                       >
+                         <span style={{ position: "absolute", left: "50%", top: -34, transform: "translateX(-50%)", background: "#ffffff", color: "#991b1b", border: "1px solid #dc2626", borderRadius: 3, padding: "1px 4px", fontSize: 11, whiteSpace: "nowrap", zIndex: 1 }}>
+                           {lengthUm === null ? "Set pixel size" : `${lengthUm.toFixed(2)} µm`}
+                         </span>
+                       </div>
+                     );
+                    })()}
+
+                    {hoveredParticle && (
+                     <div
+                       ref={metadataTooltipRef}
+                       onMouseMove={(event) => event.stopPropagation()}
+                       onPointerMove={(event) => event.stopPropagation()}
+                       onWheel={(event) => event.stopPropagation()}
+                       style={{
+                         position: "fixed",
+                         left: Math.max(8, Math.min(hoveredParticle.x, window.innerWidth - 376)),
+                         top: Math.max(8, Math.min(hoveredParticle.y, window.innerHeight - 444)),
+                         zIndex: 20,
+                         maxWidth: 360,
+                         maxHeight: 420,
+                         overflow: "auto",
+                         background: "#ffffff",
+                         border: "1px solid #94a3b8",
+                         borderRadius: 5,
+                         boxShadow: "0 4px 14px rgba(0,0,0,.2)",
+                         padding: 8,
+                         fontSize: 11,
+                         pointerEvents: "auto",
+                       }}
+                     >
+                       <table style={{ borderCollapse: "collapse" }}>
+                         <tbody>
+                           {flattenMetadata(hoveredParticle.particle).map(([key, value, isSection], index) => (
+                             <tr key={`${key}-${index}`}>
+                               {isSection ? (
+                                 <th colSpan={2} style={{ textAlign: "left", padding: "6px 0 2px", borderBottom: "1px solid #cbd5e1", color: "#334155" }}>{key}</th>
+                               ) : (
+                                 <>
+                                   <th style={{ textAlign: "left", padding: "2px 8px 2px 0", verticalAlign: "top" }}>{key}</th>
+                                   <td style={{ padding: 2 }}>{value}</td>
+                                 </>
+                               )}
+                             </tr>
+                           ))}
+                         </tbody>
+                       </table>
+                     </div>
                     )}
                   </div>
 
@@ -1314,7 +1542,7 @@ function getExpectedMaskPath(imagePath: string, suffix: "_mask.png" | "_instance
     // Fallback just in case "raw" is missing
     segments.unshift("masks"); 
   }
-  
+
   // 2. Strip the old extension (.tiff, .bmp) and add the new suffix
   const filename = segments[segments.length - 1];
   const lastDotIndex = filename.lastIndexOf(".");
@@ -1323,6 +1551,54 @@ function getExpectedMaskPath(imagePath: string, suffix: "_mask.png" | "_instance
   segments[segments.length - 1] = `${baseName}${suffix}`;
   
   return segments.join("/");
+}
+
+function getExpectedMetadataPath(imagePath: string): string {
+  const segments = imagePath.split("/");
+  const rawIndex = segments.findIndex((segment) => segment.toLowerCase() === "raw");
+  if (rawIndex !== -1) segments[rawIndex] = "masks";
+  else segments.unshift("masks");
+  const filename = segments[segments.length - 1];
+  const lastDotIndex = filename.lastIndexOf(".");
+  const baseName = lastDotIndex !== -1 ? filename.substring(0, lastDotIndex) : filename;
+  segments[segments.length - 1] = `${baseName}_meta.json`;
+  return segments.join("/");
+}
+
+function getImagePathFromMetadataPath(metadataPath: string, images: DatasetImage[]): string | undefined {
+  const normalizedPath = metadataPath.toLowerCase();
+  return images.find((image) => getExpectedMetadataPath(image.path).toLowerCase() === normalizedPath)?.path;
+}
+
+function isParticleMetadata(value: unknown): value is ParticleMetadata {
+  return Boolean(value && typeof value === "object");
+}
+
+function flattenMetadata(value: ParticleMetadata): Array<[string, string, boolean?]> {
+  const rows: Array<[string, string, boolean?]> = [];
+  const visit = (current: unknown, prefix: string) => {
+    if (current && typeof current === "object" && !Array.isArray(current)) {
+      for (const [key, child] of Object.entries(current)) visit(child, prefix ? `${prefix}.${key}` : key);
+    } else if (Array.isArray(current)) {
+      rows.push([prefix, current.join(", ")]);
+    } else if (current !== undefined && current !== null) {
+      rows.push([prefix, String(current)]);
+    }
+  };
+  for (const key of ["assigned_class", "magnification"]) {
+    if (value[key] !== undefined && value[key] !== null) rows.push([key, String(value[key])]);
+  }
+  for (const section of ["Morphology", "Classification", "Chemistry"]) {
+    const sectionValue = value[section];
+    if (!sectionValue || typeof sectionValue !== "object" || Array.isArray(sectionValue)) continue;
+    rows.push([section, "", true]);
+    visit(sectionValue, "");
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "assigned_class" || key === "magnification" || key === "Morphology" || key === "Classification" || key === "Chemistry") continue;
+    visit(child, key);
+  }
+  return rows;
 }
 
 function normalizeNoteValue(value: NoteValue | undefined): {
