@@ -38,6 +38,14 @@ interface ParticleMetadata {
   [key: string]: unknown;
 }
 
+interface MetadataDocument {
+  image_path?: string;
+  pixel_size_um?: number;
+  magnification?: number;
+  stringers?: Record<string, number[]>;
+  particles: ParticleMetadata[];
+}
+
 interface Ruler {
   start: { x: number; y: number };
   end: { x: number; y: number };
@@ -73,6 +81,8 @@ export default function App() {
   const [inclusionDictionary, setInclusionDictionary] = useState<InclusionDictionaryEntry[]>([]);
   const [maskIdsInImage, setMaskIdsInImage] = useState<Set<number>>(new Set());
   const [metadata, setMetadata] = useState<Record<string, ParticleMetadata[]>>({});
+  const [imageMetadata, setImageMetadata] = useState<Record<string, Pick<MetadataDocument, "pixel_size_um" | "magnification">>>({});
+  const [stringers, setStringers] = useState<Record<string, Record<string, number[]>>>({});
   const [hoveredParticle, setHoveredParticle] = useState<{ particle: ParticleMetadata; x: number; y: number } | null>(null);
   const [ruler, setRuler] = useState<Ruler | null>(null);
   const [drawingRuler, setDrawingRuler] = useState<Ruler | null>(null);
@@ -155,7 +165,7 @@ export default function App() {
           }
 
           if (instanceUrl) {
-            currentInstance = await fetchAndDrawBoundingBoxes(instanceUrl);
+            currentInstance = await fetchAndDrawBoundingBoxes(instanceUrl, stringers[selectedImage.path]);
             if (!isCancelled) setInstanceOverlayUrl(currentInstance);
           }
         } catch (err) {
@@ -179,7 +189,7 @@ export default function App() {
 
     void loadPreview();
     return () => { isCancelled = true; };
-  }, [selectedImage, masks]);
+  }, [selectedImage, masks, stringers]);
 
   const visibleImages = useMemo(() => {
     let baseImages = images;
@@ -233,9 +243,12 @@ export default function App() {
       setExpandedFolders(new Set());
       setMaskOverlayUrl(null);
       setInstanceOverlayUrl(null);
+      imageCache.current = {};
       setNoteReplyDraft("");
       setInclusionDictionary([]);
       setMetadata({});
+      setImageMetadata({});
+      setStringers({});
       setRuler(null);
 
       // Load Inclusion Dictionary
@@ -265,14 +278,23 @@ export default function App() {
 
       const loadedMetadata = await loadMetadata(trimmedSasUrl);
       const metadataMap: Record<string, ParticleMetadata[]> = {};
+      const imageMetadataMap: Record<string, Pick<MetadataDocument, "pixel_size_um" | "magnification">> = {};
+      const stringerMap: Record<string, Record<string, number[]>> = {};
       for (const item of loadedMetadata) {
         try {
           const response = await fetch(item.url, { cache: "no-store" });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const data: unknown = await response.json();
-          if (!Array.isArray(data)) continue;
           const imagePath = getImagePathFromMetadataPath(item.path, validImages);
-          if (imagePath) metadataMap[imagePath] = data.filter(isParticleMetadata);
+          if (!imagePath) continue;
+          const document = normalizeMetadataDocument(data);
+          if (!document) continue;
+          metadataMap[imagePath] = document.particles;
+          imageMetadataMap[imagePath] = {
+            pixel_size_um: document.pixel_size_um,
+            magnification: document.magnification,
+          };
+          if (document.stringers) stringerMap[imagePath] = document.stringers;
         } catch (error) {
           console.warn(`Could not load particle metadata ${item.path}:`, error);
         }
@@ -300,6 +322,8 @@ export default function App() {
 
       setMasks(maskMap);
       setMetadata(metadataMap);
+      setImageMetadata(imageMetadataMap);
+      setStringers(stringerMap);
       setAnnotatedSet(annotated);
       setNotes(normalizedNotes);
       setNoteSet(nextNoteSet);
@@ -608,7 +632,8 @@ export default function App() {
   }, [inclusionDictionary, maskIdsInImage]);
 
   const currentMetadata = selectedImage ? metadata[selectedImage.path] ?? [] : [];
-  const pixelSizeUm = currentMetadata.find((item) => typeof item.pixel_size_um === "number")?.pixel_size_um;
+  const pixelSizeUm = imageMetadata[selectedImage?.path ?? ""]?.pixel_size_um ??
+    currentMetadata.find((item) => typeof item.pixel_size_um === "number")?.pixel_size_um;
 
   const getImagePoint = (event: React.PointerEvent<HTMLDivElement>) => {
     const rect = (imageAreaRef.current ?? event.currentTarget).getBoundingClientRect();
@@ -1574,6 +1599,33 @@ function isParticleMetadata(value: unknown): value is ParticleMetadata {
   return Boolean(value && typeof value === "object");
 }
 
+function normalizeMetadataDocument(value: unknown): MetadataDocument | null {
+  if (Array.isArray(value)) {
+    return { particles: value.filter(isParticleMetadata) };
+  }
+  if (!value || typeof value !== "object") return null;
+
+  const document = value as Record<string, unknown>;
+  if (!Array.isArray(document.particles)) return null;
+
+  const stringers: Record<string, number[]> = {};
+  if (document.stringers && typeof document.stringers === "object" && !Array.isArray(document.stringers)) {
+    for (const [name, ids] of Object.entries(document.stringers)) {
+      if (!Array.isArray(ids)) continue;
+      const numericIds = ids.filter((id): id is number => typeof id === "number" && Number.isFinite(id));
+      if (numericIds.length > 0) stringers[name] = numericIds;
+    }
+  }
+
+  return {
+    image_path: typeof document.image_path === "string" ? document.image_path : undefined,
+    pixel_size_um: typeof document.pixel_size_um === "number" ? document.pixel_size_um : undefined,
+    magnification: typeof document.magnification === "number" ? document.magnification : undefined,
+    stringers: Object.keys(stringers).length > 0 ? stringers : undefined,
+    particles: document.particles.filter(isParticleMetadata),
+  };
+}
+
 function flattenMetadata(value: ParticleMetadata): Array<[string, string, boolean?]> {
   const rows: Array<[string, string, boolean?]> = [];
   const visit = (current: unknown, prefix: string) => {
@@ -1743,7 +1795,10 @@ function getAncestorFolderPaths(imagePath: string): string[] {
   return paths;
 }
 
-async function fetchAndDrawBoundingBoxes(instanceUrl: string): Promise<string> {
+async function fetchAndDrawBoundingBoxes(
+  instanceUrl: string,
+  stringerDefinitions: Record<string, number[]> | undefined
+): Promise<string> {
   const res = await fetch(instanceUrl);
   if (!res.ok) throw new Error(`Failed to fetch instance mask: ${res.statusText}`);
 
@@ -1784,15 +1839,37 @@ async function fetchAndDrawBoundingBoxes(instanceUrl: string): Promise<string> {
     }
   }
 
-  // Draw the crisp bounding boxes onto a transparent background
+  // Draw the crisp particle bounding boxes onto a transparent background.
   ctx.clearRect(0, 0, width, height);
-  ctx.strokeStyle = "#000000"; // Bright neon green
+  ctx.strokeStyle = "#000000";
   ctx.lineWidth = 2;
 
   for (const box of boxes.values()) {
     const w = box.maxX - box.minX;
     const h = box.maxY - box.minY;
     ctx.strokeRect(box.minX, box.minY, w || 1, h || 1);
+  }
+
+  if (stringerDefinitions) {
+    ctx.save();
+    ctx.strokeStyle = "#000000";
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 6]);
+
+    for (const particleIds of Object.values(stringerDefinitions)) {
+      const stringerBoxes = particleIds
+        .map((id) => boxes.get(id))
+        .filter((box): box is { minX: number; minY: number; maxX: number; maxY: number } => Boolean(box));
+      if (stringerBoxes.length === 0) continue;
+
+      const minX = Math.min(...stringerBoxes.map((box) => box.minX));
+      const minY = Math.min(...stringerBoxes.map((box) => box.minY));
+      const maxX = Math.max(...stringerBoxes.map((box) => box.maxX));
+      const maxY = Math.max(...stringerBoxes.map((box) => box.maxY));
+      ctx.strokeRect(minX, minY, Math.max(1, maxX - minX), Math.max(1, maxY - minY));
+    }
+
+    ctx.restore();
   }
 
   return canvas.toDataURL("image/png");
