@@ -16,6 +16,9 @@ import { buildTree } from "./services/treeBuilder";
 import type { TreeNode } from "./types/DatasetTree";
 
 type FilterMode = "all" | "annotated" | "unannotated" | "notes" | "flagged";
+type LegendMode = "class" | "suffix";
+
+const SUFFIX_OPTIONS = ["O", "N", "S", "OS", "NS", "ON", "ONS", "Unclassified"] as const;
 
 interface DatasetImage {
   name: string;
@@ -28,6 +31,7 @@ interface ParticleMetadata {
   Morphology?: Record<string, unknown>;
   Chemistry?: Record<string, unknown>;
   Classification?: Record<string, unknown>;
+  suffix?: string;
   image_coordinates?: { x?: number; y?: number };
   assigned_class?: string;
   category_id?: number;
@@ -92,9 +96,11 @@ export default function App() {
   const rulerDragRef = useRef<{ mode: "draw" | "move"; anchor?: { x: number; y: number } } | null>(null);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const imageCache = useRef<Record<string, { image: string | null; mask: string | null; instance: string | null; ids: number[] }>>({});
+  const imageCache = useRef<Record<string, { image: string | null; mask: string | null; suffixMask: string | null; instance: string | null; ids: number[] }>>({});
   
   const [isLegendCollapsed, setIsLegendCollapsed] = useState(false);
+  const [activeLegend, setActiveLegend] = useState<LegendMode>("class");
+  const [isQuestionPanelExpanded, setIsQuestionPanelExpanded] = useState(false);
   
   const imagePanelRef = useRef<HTMLDivElement | null>(null);
 
@@ -122,22 +128,39 @@ export default function App() {
         return;
       }
 
-      // 1. Check if we already processed this image
-      if (imageCache.current[selectedImage.path]) {
-        const cached = imageCache.current[selectedImage.path];
-        setImagePreviewUrl(cached.image);
-        setMaskOverlayUrl(cached.mask);
-        setInstanceOverlayUrl(cached.instance);
-        setMaskIdsInImage(new Set(cached.ids));
-        setImageLoadError(false);
-        return;
-      }
-
       try {
+        // 1. Check if we already processed this image
+        if (imageCache.current[selectedImage.path]) {
+          const cached = imageCache.current[selectedImage.path];
+          if (activeLegend === "suffix" && !cached.suffixMask) {
+            const { maskUrl, instanceUrl } = findOverlayUrls(selectedImage.path, masks);
+            let suffixMask: string | null = null;
+            if (instanceUrl) {
+              suffixMask = await fetchAndColorizeSuffixMask(instanceUrl, metadata[selectedImage.path] ?? []);
+            } else if (maskUrl) {
+              suffixMask = (await fetchAndColorizeMask(
+                maskUrl,
+                false,
+                getSuffixColorResolver(metadata[selectedImage.path] ?? [])
+              )).url;
+            }
+            if (isCancelled) return;
+            cached.suffixMask = suffixMask;
+          }
+          if (isCancelled) return;
+          setImagePreviewUrl(cached.image);
+          setMaskOverlayUrl(activeLegend === "suffix" ? cached.suffixMask : cached.mask);
+          setInstanceOverlayUrl(cached.instance);
+          setMaskIdsInImage(new Set(cached.ids));
+          setImageLoadError(false);
+          return;
+        }
+
         setImageLoadError(false);
-        let currentImage = null;
-        let currentMask = null;
-        let currentInstance = null;
+        let currentImage: string | null = null;
+        let currentMask: string | null = null;
+        let currentSuffixMask: string | null = null;
+        let currentInstance: string | null = null;
         let currentIds: number[] = [];
 
         // 2. Load Base Image
@@ -159,8 +182,20 @@ export default function App() {
             currentMask = url;
             currentIds = presentIds;
             if (!isCancelled) {
-              setMaskOverlayUrl(currentMask);
+              if (activeLegend === "class") setMaskOverlayUrl(currentMask);
               setMaskIdsInImage(new Set(currentIds));
+            }
+          }
+
+          if (activeLegend === "suffix") {
+            if (instanceUrl) {
+              currentSuffixMask = await fetchAndColorizeSuffixMask(instanceUrl, metadata[selectedImage.path] ?? []);
+            } else if (maskUrl) {
+              currentSuffixMask = (await fetchAndColorizeMask(
+                maskUrl,
+                false,
+                getSuffixColorResolver(metadata[selectedImage.path] ?? [])
+              )).url;
             }
           }
 
@@ -168,6 +203,7 @@ export default function App() {
             currentInstance = await fetchAndDrawBoundingBoxes(instanceUrl, stringers[selectedImage.path]);
             if (!isCancelled) setInstanceOverlayUrl(currentInstance);
           }
+          if (!isCancelled && activeLegend === "suffix") setMaskOverlayUrl(currentSuffixMask);
         } catch (err) {
           console.warn("Failed to load mask overlays:", err);
         }
@@ -177,6 +213,7 @@ export default function App() {
           imageCache.current[selectedImage.path] = {
             image: currentImage,
             mask: currentMask,
+            suffixMask: currentSuffixMask,
             instance: currentInstance,
             ids: currentIds
           };
@@ -189,7 +226,7 @@ export default function App() {
 
     void loadPreview();
     return () => { isCancelled = true; };
-  }, [selectedImage, masks, stringers]);
+  }, [selectedImage, masks, stringers, metadata, activeLegend]);
 
   const visibleImages = useMemo(() => {
     let baseImages = images;
@@ -620,6 +657,19 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [selectedImage]); // <-- Removed expandedFolders from here
 
+  useEffect(() => {
+    const imageArea = imageAreaRef.current;
+    if (!imageArea || !hoveredParticle) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      if (!metadataTooltipRef.current) return;
+      event.preventDefault();
+      metadataTooltipRef.current.scrollTop += event.deltaY;
+    };
+    imageArea.addEventListener("wheel", handleWheel, { passive: false });
+    return () => imageArea.removeEventListener("wheel", handleWheel);
+  }, [hoveredParticle]);
+
   const legendEntries = useMemo(() => {
     const byId = new Map<number, InclusionDictionaryEntry>();
     for (const entry of inclusionDictionary) {
@@ -630,6 +680,10 @@ export default function App() {
     }
     return Array.from(byId.values()).sort((a, b) => a.id - b.id);
   }, [inclusionDictionary, maskIdsInImage]);
+  const presentSuffixes = useMemo(
+    () => new Set((selectedImage ? metadata[selectedImage.path] ?? [] : []).map(getParticleSuffix)),
+    [metadata, selectedImage]
+  );
 
   const currentMetadata = selectedImage ? metadata[selectedImage.path] ?? [] : [];
   const pixelSizeUm = imageMetadata[selectedImage?.path ?? ""]?.pixel_size_um ??
@@ -705,12 +759,6 @@ export default function App() {
     });
     if (particle) setHoveredParticle({ particle, x: event.clientX + 14, y: event.clientY + 14 });
     else setHoveredParticle(null);
-  };
-
-  const handleImageWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    if (!hoveredParticle || !metadataTooltipRef.current) return;
-    event.preventDefault();
-    metadataTooltipRef.current.scrollTop += event.deltaY;
   };
 
   return (
@@ -820,7 +868,7 @@ export default function App() {
           flex: 1,
           minHeight: 0,
           display: "grid",
-          gridTemplateColumns: "minmax(280px, 250px) 1fr minmax(260px, 320px)",
+          gridTemplateColumns: `minmax(220px, 250px) minmax(0, 1fr) ${isQuestionPanelExpanded ? "340px" : "220px"}`,
           overflow: "hidden",
         }}
       >
@@ -899,7 +947,6 @@ export default function App() {
                     onPointerCancel={finishRuler}
                     onMouseMove={handleParticleHover}
                     onMouseLeave={() => setHoveredParticle(null)}
-                    onWheel={handleImageWheel}
                     style={{
                       flex: 1,
                       position: "relative",
@@ -1047,97 +1094,88 @@ export default function App() {
                   </div>
 
                   {/* PINNED LEGEND */}
-                  {inclusionDictionary.length > 0 && (
-                    <div
-                      style={{
-                        width: isLegendCollapsed ? "40px" : "120px",
-                        height: "100%",
-                        background: "#f9f9f9",
-                        borderLeft: "1px solid #e5e7eb",
-                        display: "flex",
-                        flexDirection: "column",
-                        transition: "width 0.2s ease-in-out",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: isLegendCollapsed ? "center" : "space-between",
-                          alignItems: "center",
-                          padding: "10px",
-                          borderBottom: "1px solid #e5e7eb",
-                          background: "#f1f5f9",
-                        }}
-                      >
-                        {!isLegendCollapsed && (
-                          <span style={{ fontSize: "12px", fontWeight: 700, color: "#334155" }}>
-                            CLASS LEGEND
-                          </span>
-                        )}
+                  {(inclusionDictionary.length > 0 || currentMetadata.length > 0 || maskIdsInImage.size > 0) && (
+                    <div style={{ display: "flex", height: "100%", flexShrink: 0, background: "#f9f9f9", borderLeft: "1px solid #e5e7eb" }}>
+                      {isLegendCollapsed ? (
                         <button
-                          onClick={() => setIsLegendCollapsed(!isLegendCollapsed)}
-                          style={{
-                            background: "none",
-                            border: "none",
-                            cursor: "pointer",
-                            fontSize: "14px",
-                            padding: "0 4px",
-                            color: "#64748b",
-                          }}
-                          title={isLegendCollapsed ? "Expand Legend" : "Collapse Legend"}
+                          type="button"
+                          onClick={() => setIsLegendCollapsed(false)}
+                          title="Expand legends"
+                          aria-label="Expand legends"
+                          style={{ width: 40, border: 0, background: "#f1f5f9", color: "#64748b", cursor: "pointer" }}
                         >
-                          {isLegendCollapsed ? "◀" : "▶"}
+                          ◀
                         </button>
-                      </div>
-
-                      {!isLegendCollapsed && (
-                        <div
-                          style={{
-                            padding: "12px",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: "8px",
-                            overflowY: "auto",
-                            flex: 1,
-                          }}
-                        >
-                          {legendEntries.map((entry) => {
-                            const color = getColorForId(entry.id);
-                            const isPresent = maskIdsInImage.has(entry.id);
-                            return (
-                              <div
-                                key={entry.id}
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: "10px",
-                                  opacity: isPresent ? 1 : 0.4,
-                                }}
+                      ) : (
+                        <>
+                          <div style={{ width: 116, display: "flex", flexDirection: "column", borderRight: "1px solid #e5e7eb" }}>
+                            <div style={{ display: "flex", alignItems: "center", background: "#f1f5f9", borderBottom: "1px solid #e5e7eb" }}>
+                              <button
+                                type="button"
+                                onClick={() => setActiveLegend("class")}
+                                aria-pressed={activeLegend === "class"}
+                                style={{ flex: 1, padding: "10px 4px", border: 0, background: "transparent", cursor: "pointer", fontSize: 10, fontWeight: 700, color: activeLegend === "class" ? "#1d4ed8" : "#334155" }}
                               >
-                                <div
-                                  style={{
-                                    width: "14px",
-                                    height: "14px",
-                                    backgroundColor: `rgb(${color.join(",")})`,
-                                    border: "1px solid #94a3b8",
-                                    borderRadius: "3px",
-                                    flexShrink: 0,
-                                  }}
-                                />
-                                <span
-                                  style={{
-                                    fontSize: "12px",
-                                    fontWeight: isPresent ? 600 : 400,
-                                    color: "#334155",
-                                    wordBreak: "break-word",
-                                  }}
-                                >
-                                  {entry.id} - {entry.name}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
+                                CLASS LEGEND
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setIsLegendCollapsed(true)}
+                                title="Collapse legends"
+                                aria-label="Collapse legends"
+                                style={{ padding: "6px 4px", border: 0, background: "transparent", cursor: "pointer", color: "#64748b" }}
+                              >
+                                ▶
+                              </button>
+                            </div>
+                            <div style={{ padding: 8, display: "flex", flexDirection: "column", gap: 7, overflowY: "auto", flex: 1 }}>
+                              {legendEntries.map((entry) => {
+                                const color = getColorForId(entry.id);
+                                const isPresent = maskIdsInImage.has(entry.id);
+                                return (
+                                  <button
+                                    type="button"
+                                    key={entry.id}
+                                    onClick={() => setActiveLegend("class")}
+                                    title="Use class colors on the mask"
+                                    style={{ display: "flex", alignItems: "center", gap: 7, padding: 0, border: 0, background: "transparent", textAlign: "left", cursor: "pointer", opacity: isPresent ? 1 : 0.4 }}
+                                  >
+                                    <span style={{ width: 13, height: 13, backgroundColor: `rgb(${color.join(",")})`, border: "1px solid #94a3b8", borderRadius: 3, flexShrink: 0 }} />
+                                    <span style={{ fontSize: 11, fontWeight: isPresent ? 600 : 400, color: "#334155", wordBreak: "break-word" }}>{entry.id} - {entry.name}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          <div style={{ width: 104, display: "flex", flexDirection: "column" }}>
+                            <button
+                              type="button"
+                              onClick={() => setActiveLegend("suffix")}
+                              aria-pressed={activeLegend === "suffix"}
+                              style={{ padding: "10px 4px", border: 0, borderBottom: "1px solid #e5e7eb", background: "#f1f5f9", cursor: "pointer", fontSize: 10, fontWeight: 700, color: activeLegend === "suffix" ? "#1d4ed8" : "#334155" }}
+                            >
+                              SUFFIX LEGEND
+                            </button>
+                            <div style={{ padding: 8, display: "flex", flexDirection: "column", gap: 7, overflowY: "auto", flex: 1 }}>
+                              {SUFFIX_OPTIONS.map((suffix) => {
+                                const isPresent = presentSuffixes.has(suffix);
+                                const color = getColorForSuffix(suffix);
+                                return (
+                                  <button
+                                    type="button"
+                                    key={suffix}
+                                    onClick={() => setActiveLegend("suffix")}
+                                    title="Use suffix colors on the mask"
+                                    style={{ display: "flex", alignItems: "center", gap: 7, padding: 0, border: 0, background: "transparent", textAlign: "left", cursor: "pointer", opacity: isPresent ? 1 : 0.4 }}
+                                  >
+                                    <span style={{ width: 13, height: 13, backgroundColor: `rgb(${color.join(",")})`, border: "1px solid #94a3b8", borderRadius: 3, flexShrink: 0 }} />
+                                    <span style={{ fontSize: 11, fontWeight: isPresent ? 600 : 400, color: "#334155", wordBreak: "break-word" }}>{suffix}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </>
                       )}
                     </div>
                   )}
@@ -1225,6 +1263,21 @@ export default function App() {
         >
           {selectedImage ? (
             <>
+              <div style={{ minHeight: 32, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, padding: "0 8px", borderBottom: "1px solid #e5e7eb", background: "#f8fafc" }}>
+                <strong style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 10, color: "#475569" }}>
+                  QUESTIONS & NOTES
+                </strong>
+                <button
+                  type="button"
+                  onClick={() => setIsQuestionPanelExpanded((expanded) => !expanded)}
+                  aria-expanded={isQuestionPanelExpanded}
+                  title={isQuestionPanelExpanded ? "Reduce question panel" : "Expand question panel"}
+                  aria-label={isQuestionPanelExpanded ? "Reduce question panel" : "Expand question panel"}
+                  style={{ flexShrink: 0, padding: "3px 6px", border: "1px solid #cbd5e1", borderRadius: 4, background: "#ffffff", color: "#475569", cursor: "pointer", fontSize: 11 }}
+                >
+                  {isQuestionPanelExpanded ? "→" : "←"}
+                </button>
+              </div>
               {/* TOP ZONE: Locked to exactly 45% height */}
               <div
                 style={{
@@ -1539,6 +1592,60 @@ function getColorForId(id: number): [number, number, number] {
   return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
 }
 
+function getParticleSuffix(particle: ParticleMetadata): (typeof SUFFIX_OPTIONS)[number] {
+  const rawSuffix = findMetadataString(particle, "suffix");
+  if (typeof rawSuffix !== "string") return "Unclassified";
+  const suffix = rawSuffix.trim().toUpperCase();
+  return SUFFIX_OPTIONS.find((option) => option.toUpperCase() === suffix) ?? "Unclassified";
+}
+
+function findMetadataString(value: unknown, propertyName: string): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findMetadataString(item, propertyName);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const matchingKey = Object.keys(record).find((key) => key.toLowerCase() === propertyName.toLowerCase());
+  if (matchingKey && typeof record[matchingKey] === "string") return record[matchingKey];
+  for (const child of Object.values(record)) {
+    const found = findMetadataString(child, propertyName);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+function getMetadataNumber(value: unknown, propertyName: string): number | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const idEntry = Object.entries(record).find(([key]) => key.toLowerCase() === propertyName.toLowerCase());
+  if (!idEntry) return undefined;
+  const rawId = idEntry[1];
+  const id = typeof rawId === "number" ? rawId : typeof rawId === "string" && rawId.trim() ? Number(rawId) : NaN;
+  return Number.isSafeInteger(id) && id > 0 ? id : undefined;
+}
+
+function getColorForSuffix(suffix: (typeof SUFFIX_OPTIONS)[number]): [number, number, number] {
+  const index = SUFFIX_OPTIONS.indexOf(suffix);
+  return getColorForId(index + 1);
+}
+
+function getSuffixColorResolver(particles: ParticleMetadata[]): (id: number) => [number, number, number] {
+  const suffixByCategory = new Map<number, (typeof SUFFIX_OPTIONS)[number] | null>();
+  for (const particle of particles) {
+    const categoryId = Number(particle.category_id);
+    if (!Number.isSafeInteger(categoryId)) continue;
+    const suffix = getParticleSuffix(particle);
+    const existing = suffixByCategory.get(categoryId);
+    suffixByCategory.set(categoryId, existing === undefined || existing === suffix ? suffix : null);
+  }
+  return (id) => getColorForSuffix(suffixByCategory.get(id) ?? "Unclassified");
+}
+
 function getFileName(path: string): string {
   return path.split("/").pop() ?? path;
 }
@@ -1697,7 +1804,11 @@ async function tiffToPngDataUrl(tiffUrl: string): Promise<string> {
   return canvas.toDataURL("image/png");
 }
 
-async function fetchAndColorizeMask(maskUrl: string, isInstance = false): Promise<{ url: string; presentIds: number[] }> {
+async function fetchAndColorizeMask(
+  maskUrl: string,
+  isInstance = false,
+  colorForLabel: (id: number) => [number, number, number] = getColorForId
+): Promise<{ url: string; presentIds: number[] }> {
   const res = await fetch(maskUrl, { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch mask: ${res.statusText}`);
 
@@ -1731,7 +1842,7 @@ async function fetchAndColorizeMask(maskUrl: string, isInstance = false): Promis
       continue;
     }
 
-    const color = getColorForId(label);
+    const color = colorForLabel(label);
     out[i] = color[0];
     out[i + 1] = color[1];
     out[i + 2] = color[2];
@@ -1747,6 +1858,81 @@ async function fetchAndColorizeMask(maskUrl: string, isInstance = false): Promis
   outCtx.putImageData(outImage, 0, 0);
 
   return { url: outCanvas.toDataURL("image/png"), presentIds: Array.from(labelSet) };
+}
+
+async function fetchAndColorizeSuffixMask(
+  instanceUrl: string,
+  particles: ParticleMetadata[]
+): Promise<string> {
+  const res = await fetch(instanceUrl, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch instance mask: ${res.statusText}`);
+
+  const png = decode(await res.arrayBuffer());
+  const canvas = document.createElement("canvas");
+  canvas.width = png.width;
+  canvas.height = png.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas not supported");
+
+  const suffixByParticleId = new Map<number, (typeof SUFFIX_OPTIONS)[number]>();
+  const suffixByImageId = new Map<number, (typeof SUFFIX_OPTIONS)[number]>();
+  for (const particle of particles) {
+    const suffix = getParticleSuffix(particle);
+    const particleId = getMetadataNumber(particle, "ID");
+    const imageId = getMetadataNumber(particle, "image_id");
+    if (particleId !== undefined) suffixByParticleId.set(particleId, suffix);
+    if (imageId !== undefined) suffixByImageId.set(imageId, suffix);
+  }
+
+  const data = png.data;
+  const labelCounts = new Map<number, number>();
+  for (let pixel = 0; pixel < png.width * png.height; pixel++) {
+    const label = Number(data[pixel * png.channels]);
+    if (label) labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+  }
+  const score = (mapping: Map<number, (typeof SUFFIX_OPTIONS)[number]>) =>
+    Array.from(labelCounts, ([label, count]) => mapping.has(label) ? count : 0)
+      .reduce((total, count) => total + count, 0);
+  const suffixById = score(suffixByImageId) >= score(suffixByParticleId) && suffixByImageId.size > 0
+    ? suffixByImageId
+    : suffixByParticleId;
+
+  for (const particle of particles) {
+    const box = particle.bbox;
+    if (!box || box.length < 4) continue;
+    const left = Math.max(0, Math.floor(box[0]));
+    const top = Math.max(0, Math.floor(box[1]));
+    const right = Math.min(png.width - 1, Math.ceil(box[2]));
+    const bottom = Math.min(png.height - 1, Math.ceil(box[3]));
+    if (right < left || bottom < top) continue;
+
+    const counts = new Map<number, number>();
+    for (let y = top; y <= bottom; y++) {
+      for (let x = left; x <= right; x++) {
+        const label = Number(data[(y * png.width + x) * png.channels]);
+        if (label) counts.set(label, (counts.get(label) ?? 0) + 1);
+      }
+    }
+    const dominantLabel = Array.from(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (dominantLabel !== undefined && !suffixById.has(dominantLabel)) {
+      suffixById.set(dominantLabel, getParticleSuffix(particle));
+    }
+  }
+
+  const output = new Uint8ClampedArray(png.width * png.height * 4);
+  for (let pixel = 0; pixel < png.width * png.height; pixel++) {
+    const label = Number(data[pixel * png.channels]);
+    if (!label) continue;
+    const color = getColorForSuffix(suffixById.get(label) ?? "Unclassified");
+    const offset = pixel * 4;
+    output[offset] = color[0];
+    output[offset + 1] = color[1];
+    output[offset + 2] = color[2];
+    output[offset + 3] = 140;
+  }
+
+  ctx.putImageData(new ImageData(output, png.width, png.height), 0, 0);
+  return canvas.toDataURL("image/png");
 }
 
 function navigationButtonStyle(disabled: boolean): React.CSSProperties {
