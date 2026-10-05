@@ -350,9 +350,7 @@ export default function App() {
       const annotated = new Set<string>();
       
       for (const img of validImages) {
-        // Only allow exact 1-to-1 path matches!
-        const expectedMask = getExpectedMaskPath(img.path, "_mask.png");
-        if (maskMap[expectedMask]) {
+        if ((metadataMap[img.path]?.length ?? 0) > 0) {
           annotated.add(img.path);
         }
       }
@@ -671,15 +669,29 @@ export default function App() {
   }, [hoveredParticle]);
 
   const legendEntries = useMemo(() => {
-    const byId = new Map<number, InclusionDictionaryEntry>();
+    const byIdAndName = new Map<string, InclusionDictionaryEntry>();
+    const addEntry = (entry: InclusionDictionaryEntry) => {
+      const key = `${entry.id}\0${entry.name.trim().toLowerCase()}`;
+      if (!byIdAndName.has(key)) byIdAndName.set(key, entry);
+    };
+
     for (const entry of inclusionDictionary) {
-      byId.set(entry.id, entry);
+      addEntry(entry);
+    }
+    for (const particles of Object.values(metadata)) {
+      for (const particle of particles) {
+        const id = getMetadataNumber(particle, "category_id");
+        const name = typeof particle.assigned_class === "string" ? particle.assigned_class.trim() : "";
+        if (id !== undefined && name) addEntry({ id, name });
+      }
     }
     for (const id of maskIdsInImage) {
-      if (!byId.has(id)) byId.set(id, { id, name: `ID ${id}` });
+      if (!Array.from(byIdAndName.values()).some((entry) => entry.id === id)) {
+        addEntry({ id, name: `ID ${id}` });
+      }
     }
-    return Array.from(byId.values()).sort((a, b) => a.id - b.id);
-  }, [inclusionDictionary, maskIdsInImage]);
+    return Array.from(byIdAndName.values()).sort((a, b) => a.id - b.id || a.name.localeCompare(b.name));
+  }, [inclusionDictionary, maskIdsInImage, metadata]);
   const presentSuffixes = useMemo(
     () => new Set((selectedImage ? metadata[selectedImage.path] ?? [] : []).map(getParticleSuffix)),
     [metadata, selectedImage]
@@ -1094,7 +1106,7 @@ export default function App() {
                   </div>
 
                   {/* PINNED LEGEND */}
-                  {(inclusionDictionary.length > 0 || currentMetadata.length > 0 || maskIdsInImage.size > 0) && (
+                  {legendEntries.length > 0 && (
                     <div style={{ display: "flex", height: "100%", flexShrink: 0, background: "#f9f9f9", borderLeft: "1px solid #e5e7eb" }}>
                       {isLegendCollapsed ? (
                         <button
@@ -1135,7 +1147,7 @@ export default function App() {
                                 return (
                                   <button
                                     type="button"
-                                    key={entry.id}
+                                    key={`${entry.id}-${entry.name}`}
                                     onClick={() => setActiveLegend("class")}
                                     title="Use class colors on the mask"
                                     style={{ display: "flex", alignItems: "center", gap: 7, padding: 0, border: 0, background: "transparent", textAlign: "left", cursor: "pointer", opacity: isPresent ? 1 : 0.4 }}
